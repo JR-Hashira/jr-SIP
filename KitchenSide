@@ -1,0 +1,365 @@
+import React, { useState, useEffect } from 'react';
+import {
+  SafeAreaView,
+  ScrollView,
+  Text,
+  StyleSheet,
+  View,
+  TouchableOpacity,
+  Alert
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import{ createClient } from '@supabase/supabase-js'
+const SUPABASE_URL = "https://tbfhhplpwqelstuzmlmh.supabase.co";
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Kitchen Display Screen - STANDALONE COMPONENT
+const KitchenScreen = () => {
+  const [orders, setOrders] = useState([]);
+ 
+  // Load orders every 3 seconds
+  useEffect(() => {
+    const loadOrders = async () => {
+      try {
+        const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
+        if (kitchenOrders) {
+          const allOrders = JSON.parse(kitchenOrders);
+          // Show only pending/preparing/ready orders (not completed)
+          const activeOrders = allOrders.filter(order =>
+            order.status !== 'completed'
+          );
+          setOrders(activeOrders);
+        }
+      } catch (error) {
+        console.error('Error loading kitchen orders:', error);
+      }
+    };
+ 
+    loadOrders(); // Load immediately
+    const interval = setInterval(loadOrders, 3000); // Then every 3 seconds
+   
+    return () => clearInterval(interval); // Cleanup on unmount
+  }, []);
+ 
+  const updateOrderStatus = async (orderId, newStatus) => {
+    try {
+      const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
+      if (kitchenOrders) {
+        const orders = JSON.parse(kitchenOrders);
+        const updatedOrders = orders.map(order =>
+          order.id === orderId ? { ...order, status: newStatus } : order
+        );
+        await AsyncStorage.setItem('kitchenOrders', JSON.stringify(updatedOrders));
+        setOrders(updatedOrders.filter(order => order.status !== 'completed'));
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to update order status");
+    }
+  };
+ 
+  const clearCompletedOrders = async () => {
+    try {
+      const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
+      if (kitchenOrders) {
+        const orders = JSON.parse(kitchenOrders);
+        // Keep only active orders (remove completed)
+        const activeOrders = orders.filter(order => order.status !== 'completed');
+        await AsyncStorage.setItem('kitchenOrders', JSON.stringify(activeOrders));
+        setOrders(activeOrders);
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to clear completed orders");
+    }
+  };
+ 
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'ready': return '#00ff00';
+      case 'preparing': return '#ffa500';
+      case 'pending': return '#ff4444';
+      default: return '#ff4444';
+    }
+  };
+ 
+  const getStatusText = (status) => {
+    switch (status) {
+      case 'ready': return 'READY FOR PICKUP';
+      case 'preparing': return 'IN PROGRESS';
+      case 'pending': return 'NEW ORDER';
+      default: return status.toUpperCase();
+    }
+  };
+ 
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <Text style={styles.title}>KITCHEN DISPLAY</Text>
+       
+        <View style={styles.headerRow}>
+          <Text style={styles.orderCount}>Active Orders: {orders.length}</Text>
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={clearCompletedOrders}
+          >
+            <Text style={styles.clearButtonText}>Clear Completed</Text>
+          </TouchableOpacity>
+        </View>
+ 
+        {orders.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No active orders</Text>
+            <Text style={styles.emptyStateSubtext}>New orders will appear here automatically</Text>
+          </View>
+        ) : (
+          orders.map((order) => (
+            <View key={order.id} style={[
+              styles.kitchenOrderCard,
+              { borderLeftColor: getStatusColor(order.status) }
+            ]}>
+              <View style={styles.orderHeader}>
+                <View>
+                  <Text style={styles.orderId}>Order #{order.id.toString().slice(-4)}</Text>
+                  <Text style={styles.orderTime}>{order.date}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
+                  <Text style={styles.statusBadgeText}>{getStatusText(order.status)}</Text>
+                </View>
+              </View>
+             
+              <View style={styles.customerInfo}>
+                <Text style={styles.customerLabel}>Customer:</Text>
+                <Text style={styles.customerName}>{order.customerName}</Text>
+              </View>
+             
+              <View style={styles.itemsSection}>
+                <Text style={styles.itemsLabel}>Items:</Text>
+                {order.items.map((item, index) => (
+                  <View key={index} style={styles.itemRow}>
+                    <Text style={styles.itemName}>• {item.name}</Text>
+                    <Text style={styles.itemPrice}>{item.price}</Text>
+                  </View>
+                ))}
+              </View>
+             
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total:</Text>
+                <Text style={styles.totalAmount}>${order.total}</Text>
+              </View>
+             
+              <View style={styles.actionButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    { backgroundColor: order.status === 'pending' ? '#ffa500' : '#cccccc' }
+                  ]}
+                  onPress={() => updateOrderStatus(order.id, 'preparing')}
+                  disabled={order.status !== 'pending'}
+                >
+                  <Text style={styles.actionButtonText}>Start Cooking</Text>
+                </TouchableOpacity>
+               
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    { backgroundColor: order.status === 'preparing' ? '#00ff00' : '#cccccc' }
+                  ]}
+                  onPress={() => updateOrderStatus(order.id, 'ready')}
+                  disabled={order.status !== 'preparing'}
+                >
+                  <Text style={styles.actionButtonText}>Mark Ready</Text>
+                </TouchableOpacity>
+               
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    { backgroundColor: order.status === 'ready' ? '#238636' : '#cccccc' }
+                  ]}
+                  onPress={() => updateOrderStatus(order.id, 'completed')}
+                  disabled={order.status !== 'ready'}
+                >
+                  <Text style={styles.actionButtonText}>Complete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+};
+ 
+// Styles for Kitchen Display ONLY
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 16,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#00ff00',
+    textAlign: 'center',
+    marginBottom: 20,
+    fontFamily: 'monospace',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  orderCount: {
+    fontSize: 16,
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  clearButton: {
+    backgroundColor: '#ff6b35',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  clearButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyStateText: {
+    fontSize: 20,
+    color: '#888',
+    marginBottom: 8,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+  kitchenOrderCard: {
+    backgroundColor: '#2d2d2d',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderLeftWidth: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  orderHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  orderId: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    fontFamily: 'monospace',
+  },
+  orderTime: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  statusBadgeText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 10,
+  },
+  customerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  customerLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginRight: 6,
+  },
+  customerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  itemsSection: {
+    marginBottom: 12,
+  },
+  itemsLabel: {
+    fontSize: 14,
+    color: '#888',
+    marginBottom: 6,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  itemName: {
+    fontSize: 14,
+    color: '#ffffff',
+    flex: 1,
+  },
+  itemPrice: {
+    fontSize: 14,
+    color: '#00ff00',
+    fontWeight: '600',
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#444',
+    paddingTop: 8,
+    marginBottom: 12,
+  },
+  totalLabel: {
+    fontSize: 16,
+    color: '#ffffff',
+    fontWeight: 'bold',
+  },
+  totalAmount: {
+    fontSize: 18,
+    color: '#00ff00',
+    fontWeight: 'bold',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  actionButton: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+});
+ 
+export default KitchenScreen;
+ 
