@@ -1,0 +1,649 @@
+import React, { useState, useEffect } from 'react';
+import { Platform, SafeAreaView, ScrollView, Text, StyleSheet, View, TouchableOpacity, Image, ImageBackground, Modal, Alert, TextInput } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import{ createClient } from '@supabase/supabase-js'
+const SUPABASE_URL = 'https://tbfhhplpwqelstuzmlmh.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Mock server using AsyncStorage
+const api = {
+  sendOrder: async (order) => {
+    try {
+      const existingOrders = await AsyncStorage.getItem('kitchenOrders');
+      const orders = existingOrders ? JSON.parse(existingOrders) : [];
+      const newOrder = {
+        ...order,
+        id: Date.now(),
+        date: new Date().toLocaleString(),
+        status: 'pending'
+      };
+      orders.push(newOrder);
+      await AsyncStorage.setItem('kitchenOrders', JSON.stringify(orders));
+      return true;
+    } catch (error) {
+      console.error('Error sending order:', error);
+      return false;
+    }
+  }
+};
+ 
+// Logo Component
+const GitGrubLogo = ({ size = 150, style }) => (
+  <View style={[styles.logoContainer, style]}>
+    <Text style={[styles.logoText, { fontSize: size * 0.4 }]}>GitGrub</Text>
+    <Text style={[styles.establishedText, { fontSize: size * 0.1 }]}>Est. 2025</Text>
+  </View>
+);
+ 
+// Login Screen
+const LoginScreen = ({ navigation }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+ 
+  const handleLogin = async () => {
+    if (username && password) {
+      try {
+        await AsyncStorage.setItem('user', JSON.stringify({ username }));
+        navigation.navigate('Home');
+      } catch (error) {
+        Alert.alert("Error", "Failed to save user data");
+      }
+    } else {
+      Alert.alert("Error", "Please enter both username and password");
+    }
+  };
+ 
+  return (
+    <View style={[styles.container, styles.background]}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={180} style={styles.logo} />
+         
+          <Text style={styles.title}>Login to GitGrub</Text>
+         
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+          />
+         
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
+         
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleLogin}
+          >
+            <Text style={styles.buttonText}>Login</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+ 
+// HomeScreen
+const HomeScreen = ({ navigation }) => {
+  return (
+    <View style={[styles.container, styles.background]}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <GitGrubLogo size={160} style={styles.logo} />
+ 
+          <Text style={styles.title}>Welcome to GitGrub</Text>
+ 
+          <Text style={styles.introText}>
+            Late night food for hungry developers
+          </Text>
+         
+          <TouchableOpacity
+            style={styles.button}
+            onPress={() => navigation.navigate('Menu')}
+          >
+            <Text style={styles.buttonText}>View Menu</Text>
+          </TouchableOpacity>
+         
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('OrderHistory')}
+          >
+            <Text style={styles.buttonText}>View Order History</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+ 
+// MenuScreen with Cart
+const MenuScreen = ({ navigation }) => {
+  const [cart, setCart] = useState([]);
+  const [customerName, setCustomerName] = useState('');
+  const [showNameInput, setShowNameInput] = useState(false);
+ 
+  const addToCart = (item) => {
+    setCart([...cart, item]);
+  };
+ 
+  const removeFromCart = (index) => {
+    const newCart = [...cart];
+    newCart.splice(index, 1);
+    setCart(newCart);
+  };
+ 
+  const calculateTotal = () => {
+    return cart.reduce((total, item) => {
+      const price = parseFloat(item.price.replace('$', ''));
+      return total + price;
+    }, 0).toFixed(2);
+  };
+ 
+  const handleCheckout = async () => {
+    if (cart.length === 0) {
+      Alert.alert("Empty Cart", "Your cart is empty. Please add items before checkout.");
+      return;
+    }
+   
+    if (!customerName) {
+      setShowNameInput(true);
+      return;
+    }
+   
+    try {
+      const order = {
+        items: cart,
+        total: calculateTotal(),
+        customerName
+      };
+     
+      // Save to local history
+      const existingHistory = await AsyncStorage.getItem('orderHistory');
+      const history = existingHistory ? JSON.parse(existingHistory) : [];
+      await AsyncStorage.setItem('orderHistory', JSON.stringify([...history, {
+        ...order,
+        id: Date.now(),
+        date: new Date().toLocaleString()
+      }]));
+     
+      // Send to kitchen
+      const success = await api.sendOrder(order);
+     
+      if (!success) throw new Error('Failed to send to kitchen');
+     
+      setCart([]);
+      setCustomerName('');
+      Alert.alert(
+        "Order Confirmed!",
+        `Thank you, ${customerName}! Your order total is $${calculateTotal()}`
+      );
+    } catch (error) {
+      Alert.alert(
+        "Order Submitted",
+        `Your order was saved but couldn't reach the kitchen. Please notify staff.`
+      );
+    }
+  };
+ 
+  return (
+    <View style={[styles.container, styles.background]}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={true}
+        >
+          <GitGrubLogo size={120} style={styles.smallLogo} />
+          <Text style={styles.title}>GitGrub Menu</Text>
+         
+          {showNameInput && (
+            <View style={styles.nameInputContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your name"
+                value={customerName}
+                onChangeText={setCustomerName}
+                onSubmitEditing={() => {
+                  if (customerName) {
+                    setShowNameInput(false);
+                    handleCheckout();
+                  }
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.button, { marginTop: 10 }]}
+                onPress={() => {
+                  if (customerName) {
+                    setShowNameInput(false);
+                    handleCheckout();
+                  }
+                }}
+              >
+                <Text style={styles.buttonText}>Confirm Name</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+ 
+          <View style={styles.menuItemContainer}>
+            <Text style={styles.menuSection}>Pizza Slices:</Text>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "Cheese Pizza", price: "$6.00" })}
+            >
+              <Text style={styles.menuItem}>- Cheese: $6.00</Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "Pepperoni Pizza", price: "$7.00" })}
+            >
+              <Text style={styles.menuItem}>- Pepperoni: $7.00</Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "Pepperoni and Sausage Pizza", price: "$8.00" })}
+            >
+              <Text style={styles.menuItem}>- Pepperoni and Sausage: $8.00</Text>
+            </TouchableOpacity>
+ 
+            <View style={styles.separator}></View>
+ 
+            <Text style={styles.menuSection}>Sandwiches:</Text>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "Chicken Sandwich", price: "$5.00" })}
+            >
+              <Text style={styles.menuItem}>- Chicken Sandwich: $5.00</Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "Grilled Cheese Sandwich", price: "$5.00" })}
+            >
+              <Text style={styles.menuItem}>- Grilled Cheese Sandwich: $5.00</Text>
+            </TouchableOpacity>
+           
+            <View style={styles.separator}></View>
+ 
+            <Text style={styles.menuSection}>Wings:</Text>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "6 Piece Wings", price: "$8.00" })}
+            >
+              <Text style={styles.menuItem}>- 6 Piece Wings: $8.00</Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.menuItemButton}
+              onPress={() => addToCart({ name: "12 Piece Wings", price: "$15.00" })}
+            >
+              <Text style={styles.menuItem}>- 12 Piece Wings: $15.00</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+ 
+        {/* Cart Section */}
+        <View style={styles.cartContainer}>
+          <Text style={styles.cartTitle}>Your Cart ({cart.length} items)</Text>
+         
+          {cart.length > 0 ? (
+            <>
+              {cart.map((item, index) => (
+                <View key={index} style={styles.cartItem}>
+                  <Text style={styles.cartItemText}>{item.name} - {item.price}</Text>
+                  <TouchableOpacity onPress={() => removeFromCart(index)}>
+                    <Text style={styles.removeItemText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+             
+              <Text style={styles.cartTotal}>Total: ${calculateTotal()}</Text>
+             
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton]}
+                onPress={handleCheckout}
+              >
+                <Text style={styles.buttonText}>Checkout</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <Text style={styles.emptyCartText}>Your cart is empty</Text>
+          )}
+        </View>
+      </SafeAreaView>
+    </View>
+  );
+};
+ 
+// Order History Screen
+const OrderHistoryScreen = () => {
+  const [orderHistory, setOrderHistory] = useState([]);
+ 
+  useEffect(() => {
+    const loadOrderHistory = async () => {
+      try {
+        const history = await AsyncStorage.getItem('orderHistory');
+        if (history) {
+          setOrderHistory(JSON.parse(history));
+        }
+      } catch (error) {
+        Alert.alert("Error", "Failed to load order history");
+      }
+    };
+   
+    loadOrderHistory();
+  }, []);
+ 
+  return (
+    <View style={[styles.container, styles.background]}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={120} style={styles.smallLogo} />
+          <Text style={styles.title}>Your Order History</Text>
+         
+          {orderHistory.length > 0 ? (
+            orderHistory.map((order) => (
+              <View key={order.id} style={styles.orderCard}>
+                <Text style={styles.orderDate}>{order.date}</Text>
+                <Text style={styles.orderCustomer}>Name: {order.customerName}</Text>
+               
+                {order.items.map((item, index) => (
+                  <Text key={index} style={styles.orderItem}>
+                    {item.name} - {item.price}
+                  </Text>
+                ))}
+               
+                <Text style={styles.orderTotal}>Total: ${order.total}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptyHistoryText}>No order history found</Text>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+ 
+// Navigation
+const Stack = createStackNavigator();
+ 
+const App = () => {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+ 
+  useEffect(() => {
+    const checkLoginStatus = async () => {
+      try {
+        const user = await AsyncStorage.getItem('user');
+        setIsLoggedIn(!!user);
+      } catch (error) {
+        console.error("Error checking login status:", error);
+      }
+    };
+   
+    checkLoginStatus();
+  }, []);
+ 
+  return (
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName={isLoggedIn ? "Home" : "Login"}
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: '#1a1a2e', // Consistent with background
+          },
+          headerTintColor: '#fff',
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+        }}
+      >
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'GitGrub' }} />
+        <Stack.Screen name="Menu" component={MenuScreen} options={{ title: 'Menu' }} />
+        <Stack.Screen name="OrderHistory" component={OrderHistoryScreen} options={{ title: 'Order History' }} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+};
+ 
+// Updated Styles with consistent color scheme
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  background: {
+    backgroundColor: '#162447', // Consistent dark blue background
+  },
+  safeArea: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 30,
+    padding: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: '#e43f5a',
+  },
+  logoText: {
+    fontWeight: 'bold',
+    color: '#e43f5a', // GitGrub brand color
+    textAlign: 'center',
+  },
+  establishedText: {
+    color: '#fff',
+    marginTop: 5,
+    fontStyle: 'italic',
+  },
+  logo: {
+    marginTop: 20,
+  },
+  smallLogo: {
+    marginBottom: 10,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#e43f5a', // Consistent brand color
+    marginBottom: 20,
+    textAlign: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e43f5a',
+  },
+  introText: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    marginBottom: 30,
+    textAlign: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1f4068',
+  },
+  button: {
+    backgroundColor: '#e43f5a', // Brand color
+    padding: 15,
+    borderRadius: 10,
+    alignSelf: 'center',
+    marginTop: 20,
+    marginBottom: 20,
+    width: '80%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  secondaryButton: {
+    backgroundColor: '#1f4068', // Secondary color
+  },
+  buttonText: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  menuItemContainer: {
+    marginBottom: 20,
+    width: '100%',
+  },
+  menuSection: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginTop: 15,
+    marginBottom: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    padding: 12,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#e43f5a',
+  },
+  menuItemButton: {
+    marginBottom: 8,
+  },
+  menuItem: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    padding: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  separator: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginVertical: 15,
+  },
+  input: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 15,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#e43f5a',
+  },
+  cartContainer: {
+    backgroundColor: 'rgba(31, 64, 104, 0.9)',
+    padding: 15,
+    borderTopWidth: 2,
+    borderTopColor: '#e43f5a',
+  },
+  cartTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: 'white',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  cartItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 5,
+  },
+  cartItemText: {
+    fontSize: 16,
+    color: 'white',
+    flex: 1,
+  },
+  removeItemText: {
+    fontSize: 14,
+    color: '#e43f5a',
+    fontWeight: 'bold',
+  },
+  cartTotal: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+    marginTop: 10,
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  emptyCartText: {
+    fontSize: 16,
+    color: 'white',
+    textAlign: 'center',
+    marginVertical: 10,
+    fontStyle: 'italic',
+  },
+  orderCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#e43f5a',
+  },
+  orderDate: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+    color: '#1a1a2e',
+  },
+  orderCustomer: {
+    fontSize: 16,
+    marginBottom: 10,
+    color: '#1a1a2e',
+  },
+  orderItem: {
+    fontSize: 14,
+    marginLeft: 10,
+    marginBottom: 5,
+    color: '#1a1a2e',
+  },
+  orderTotal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 10,
+    color: '#e43f5a',
+  },
+  emptyHistoryText: {
+    fontSize: 18,
+    color: 'white',
+    textAlign: 'center',
+    marginTop: 50,
+    fontStyle: 'italic',
+  },
+  nameInputContainer: {
+    backgroundColor: 'rgba(31, 64, 104, 0.9)',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#e43f5a',
+  },
+});
+ 
+export default App;
+ 
