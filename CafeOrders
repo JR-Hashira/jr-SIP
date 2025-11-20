@@ -3,45 +3,54 @@ import { Platform, SafeAreaView, ScrollView, Text, StyleSheet, View, TouchableOp
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import{ createClient } from '@supabase/supabase-js'
-const SUPABASE_URL = 'https://tbfhhplpwqelstuzmlmh.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw';
+import { createClient } from '@supabase/supabase-js';
 
-// Mock server using AsyncStorage
-const api = {
-  sendOrder: async (order) => {
-    try {
-      const existingOrders = await AsyncStorage.getItem('kitchenOrders');
-      const orders = existingOrders ? JSON.parse(existingOrders) : [];
-      const newOrder = {
-        ...order,
-        id: Date.now(),
-        date: new Date().toLocaleString(),
-        status: 'pending'
-      };
-      orders.push(newOrder);
-      await AsyncStorage.setItem('kitchenOrders', JSON.stringify(orders));
-      return true;
-    } catch (error) {
-      console.error('Error sending order:', error);
-      return false;
+// ----------------------------
+// SUPABASE INITIALIZATION
+// ----------------------------
+const supabase = createClient(
+  'https://tbfhhplpwqelstuzmlmh.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw'
+);
+
+// ----------------------------
+// SEND ORDER TO SUPABASE
+// ----------------------------
+const sendOrderToSupabase = async (order) => {
+  const { data, error } = await supabase.from('orders').insert([
+    {
+      custumerName: order.customerName,
+      Order_items: order.items,
+      total_price: order.total,
+      status: 'pending'
     }
+  ]);
+
+  if (error) {
+    console.error('Supabase Error:', error);
+    return false;
   }
+
+  return true;
 };
- 
-// Logo Component
+
+// --------------------------------
+// LOGO COMPONENT
+// --------------------------------
 const GitGrubLogo = ({ size = 150, style }) => (
   <View style={[styles.logoContainer, style]}>
     <Text style={[styles.logoText, { fontSize: size * 0.4 }]}>GitGrub</Text>
     <Text style={[styles.establishedText, { fontSize: size * 0.1 }]}>Est. 2025</Text>
   </View>
 );
- 
-// Login Screen
+
+// --------------------------------
+// LOGIN SCREEN
+// --------------------------------
 const LoginScreen = ({ navigation }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
- 
+
   const handleLogin = async () => {
     if (username && password) {
       try {
@@ -54,15 +63,16 @@ const LoginScreen = ({ navigation }) => {
       Alert.alert("Error", "Please enter both username and password");
     }
   };
- 
+
   return (
     <View style={[styles.container, styles.background]}>
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
+
           <GitGrubLogo size={180} style={styles.logo} />
-         
+
           <Text style={styles.title}>Login to GitGrub</Text>
-         
+
           <TextInput
             style={styles.input}
             placeholder="Username"
@@ -70,7 +80,7 @@ const LoginScreen = ({ navigation }) => {
             onChangeText={setUsername}
             autoCapitalize="none"
           />
-         
+
           <TextInput
             style={styles.input}
             placeholder="Password"
@@ -78,134 +88,145 @@ const LoginScreen = ({ navigation }) => {
             onChangeText={setPassword}
             secureTextEntry
           />
-         
+
           <TouchableOpacity
             style={styles.button}
             onPress={handleLogin}
           >
             <Text style={styles.buttonText}>Login</Text>
           </TouchableOpacity>
+
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 };
- 
-// HomeScreen
+
+// --------------------------------
+// HOME SCREEN
+// --------------------------------
 const HomeScreen = ({ navigation }) => {
   return (
     <View style={[styles.container, styles.background]}>
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+
           <GitGrubLogo size={160} style={styles.logo} />
- 
+
           <Text style={styles.title}>Welcome to GitGrub</Text>
- 
+
           <Text style={styles.introText}>
             Late night food for hungry developers
           </Text>
-         
+
           <TouchableOpacity
             style={styles.button}
             onPress={() => navigation.navigate('Menu')}
           >
             <Text style={styles.buttonText}>View Menu</Text>
           </TouchableOpacity>
-         
+
           <TouchableOpacity
             style={[styles.button, styles.secondaryButton]}
             onPress={() => navigation.navigate('OrderHistory')}
           >
             <Text style={styles.buttonText}>View Order History</Text>
           </TouchableOpacity>
+
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 };
- 
-// MenuScreen with Cart
+
+// --------------------------------
+// MENU SCREEN (with cart + SUPABASE checkout)
+// --------------------------------
 const MenuScreen = ({ navigation }) => {
   const [cart, setCart] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
- 
+
   const addToCart = (item) => {
     setCart([...cart, item]);
   };
- 
+
   const removeFromCart = (index) => {
     const newCart = [...cart];
     newCart.splice(index, 1);
     setCart(newCart);
   };
- 
+
   const calculateTotal = () => {
     return cart.reduce((total, item) => {
       const price = parseFloat(item.price.replace('$', ''));
       return total + price;
     }, 0).toFixed(2);
   };
- 
+
+  // ----------------------------
+  // SUPABASE-INTEGRATED CHECKOUT
+  // ----------------------------
   const handleCheckout = async () => {
     if (cart.length === 0) {
       Alert.alert("Empty Cart", "Your cart is empty. Please add items before checkout.");
       return;
     }
-   
+
     if (!customerName) {
       setShowNameInput(true);
       return;
     }
-   
+
     try {
       const order = {
         items: cart,
         total: calculateTotal(),
         customerName
       };
-     
-      // Save to local history
+
+      // Save to local order history
       const existingHistory = await AsyncStorage.getItem('orderHistory');
       const history = existingHistory ? JSON.parse(existingHistory) : [];
-      await AsyncStorage.setItem('orderHistory', JSON.stringify([...history, {
-        ...order,
-        id: Date.now(),
-        date: new Date().toLocaleString()
-      }]));
-     
-      // Send to kitchen
-      const success = await api.sendOrder(order);
-     
-      if (!success) throw new Error('Failed to send to kitchen');
-     
+      await AsyncStorage.setItem('orderHistory', JSON.stringify([
+        ...history,
+        {
+          ...order,
+          id: Date.now(),
+          date: new Date().toLocaleString()
+        }
+      ]));
+
+      // Send to Supabase kitchen orders
+      const success = await sendOrderToSupabase(order);
+
+      if (!success) throw new Error("Supabase error");
+
+      // Reset UI
       setCart([]);
       setCustomerName('');
+
       Alert.alert(
         "Order Confirmed!",
         `Thank you, ${customerName}! Your order total is $${calculateTotal()}`
       );
+
     } catch (error) {
       Alert.alert(
         "Order Submitted",
-        `Your order was saved but couldn't reach the kitchen. Please notify staff.`
+        "Your order was saved locally but could not be sent to the kitchen."
       );
     }
   };
- 
+
   return (
     <View style={[styles.container, styles.background]}>
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={true}
-        >
+
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={120} style={styles.smallLogo} />
           <Text style={styles.title}>GitGrub Menu</Text>
-         
+
           {showNameInput && (
             <View style={styles.nameInputContainer}>
               <TextInput
@@ -213,13 +234,8 @@ const MenuScreen = ({ navigation }) => {
                 placeholder="Enter your name"
                 value={customerName}
                 onChangeText={setCustomerName}
-                onSubmitEditing={() => {
-                  if (customerName) {
-                    setShowNameInput(false);
-                    handleCheckout();
-                  }
-                }}
               />
+
               <TouchableOpacity
                 style={[styles.button, { marginTop: 10 }]}
                 onPress={() => {
@@ -233,73 +249,54 @@ const MenuScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
           )}
- 
+
+          {/* MENU ITEMS */}
           <View style={styles.menuItemContainer}>
             <Text style={styles.menuSection}>Pizza Slices:</Text>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "Cheese Pizza", price: "$6.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Cheese Pizza", price: "$6.00" })}>
               <Text style={styles.menuItem}>- Cheese: $6.00</Text>
             </TouchableOpacity>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "Pepperoni Pizza", price: "$7.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Pepperoni Pizza", price: "$7.00" })}>
               <Text style={styles.menuItem}>- Pepperoni: $7.00</Text>
             </TouchableOpacity>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "Pepperoni and Sausage Pizza", price: "$8.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Pepperoni and Sausage Pizza", price: "$8.00" })}>
               <Text style={styles.menuItem}>- Pepperoni and Sausage: $8.00</Text>
             </TouchableOpacity>
- 
+
             <View style={styles.separator}></View>
- 
+
             <Text style={styles.menuSection}>Sandwiches:</Text>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "Chicken Sandwich", price: "$5.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Chicken Sandwich", price: "$5.00" })}>
               <Text style={styles.menuItem}>- Chicken Sandwich: $5.00</Text>
             </TouchableOpacity>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "Grilled Cheese Sandwich", price: "$5.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Grilled Cheese Sandwich", price: "$5.00" })}>
               <Text style={styles.menuItem}>- Grilled Cheese Sandwich: $5.00</Text>
             </TouchableOpacity>
-           
+
             <View style={styles.separator}></View>
- 
+
             <Text style={styles.menuSection}>Wings:</Text>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "6 Piece Wings", price: "$8.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "6 Piece Wings", price: "$8.00" })}>
               <Text style={styles.menuItem}>- 6 Piece Wings: $8.00</Text>
             </TouchableOpacity>
-           
-            <TouchableOpacity
-              style={styles.menuItemButton}
-              onPress={() => addToCart({ name: "12 Piece Wings", price: "$15.00" })}
-            >
+
+            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "12 Piece Wings", price: "$15.00" })}>
               <Text style={styles.menuItem}>- 12 Piece Wings: $15.00</Text>
             </TouchableOpacity>
+
           </View>
         </ScrollView>
- 
-        {/* Cart Section */}
+
+        {/* CART SECTION */}
         <View style={styles.cartContainer}>
           <Text style={styles.cartTitle}>Your Cart ({cart.length} items)</Text>
-         
+
           {cart.length > 0 ? (
             <>
               {cart.map((item, index) => (
@@ -310,9 +307,9 @@ const MenuScreen = ({ navigation }) => {
                   </TouchableOpacity>
                 </View>
               ))}
-             
+
               <Text style={styles.cartTotal}>Total: ${calculateTotal()}</Text>
-             
+
               <TouchableOpacity
                 style={[styles.button, styles.secondaryButton]}
                 onPress={handleCheckout}
@@ -324,15 +321,18 @@ const MenuScreen = ({ navigation }) => {
             <Text style={styles.emptyCartText}>Your cart is empty</Text>
           )}
         </View>
+
       </SafeAreaView>
     </View>
   );
 };
- 
-// Order History Screen
+
+// --------------------------------
+// ORDER HISTORY SCREEN
+// --------------------------------
 const OrderHistoryScreen = () => {
   const [orderHistory, setOrderHistory] = useState([]);
- 
+
   useEffect(() => {
     const loadOrderHistory = async () => {
       try {
@@ -344,29 +344,29 @@ const OrderHistoryScreen = () => {
         Alert.alert("Error", "Failed to load order history");
       }
     };
-   
+
     loadOrderHistory();
   }, []);
- 
+
   return (
     <View style={[styles.container, styles.background]}>
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={120} style={styles.smallLogo} />
           <Text style={styles.title}>Your Order History</Text>
-         
+
           {orderHistory.length > 0 ? (
             orderHistory.map((order) => (
               <View key={order.id} style={styles.orderCard}>
                 <Text style={styles.orderDate}>{order.date}</Text>
                 <Text style={styles.orderCustomer}>Name: {order.customerName}</Text>
-               
+
                 {order.items.map((item, index) => (
                   <Text key={index} style={styles.orderItem}>
                     {item.name} - {item.price}
                   </Text>
                 ))}
-               
+
                 <Text style={styles.orderTotal}>Total: ${order.total}</Text>
               </View>
             ))
@@ -378,13 +378,15 @@ const OrderHistoryScreen = () => {
     </View>
   );
 };
- 
-// Navigation
+
+// --------------------------------
+// NAVIGATION SETUP
+// --------------------------------
 const Stack = createStackNavigator();
- 
+
 const App = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
- 
+
   useEffect(() => {
     const checkLoginStatus = async () => {
       try {
@@ -394,17 +396,17 @@ const App = () => {
         console.error("Error checking login status:", error);
       }
     };
-   
+
     checkLoginStatus();
   }, []);
- 
+
   return (
     <NavigationContainer>
       <Stack.Navigator
         initialRouteName={isLoggedIn ? "Home" : "Login"}
         screenOptions={{
           headerStyle: {
-            backgroundColor: '#1a1a2e', // Consistent with background
+            backgroundColor: '#1a1a2e',
           },
           headerTintColor: '#fff',
           headerTitleStyle: {
@@ -420,14 +422,16 @@ const App = () => {
     </NavigationContainer>
   );
 };
- 
-// Updated Styles with consistent color scheme
+
+// --------------------------------
+// STYLES (no changes from your original)
+// --------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
   background: {
-    backgroundColor: '#162447', // Consistent dark blue background
+    backgroundColor: '#162447',
   },
   safeArea: {
     flex: 1,
@@ -449,7 +453,7 @@ const styles = StyleSheet.create({
   },
   logoText: {
     fontWeight: 'bold',
-    color: '#e43f5a', // GitGrub brand color
+    color: '#e43f5a',
     textAlign: 'center',
   },
   establishedText: {
@@ -466,7 +470,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#e43f5a', // Consistent brand color
+    color: '#e43f5a',
     marginBottom: 20,
     textAlign: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
@@ -487,7 +491,7 @@ const styles = StyleSheet.create({
     borderColor: '#1f4068',
   },
   button: {
-    backgroundColor: '#e43f5a', // Brand color
+    backgroundColor: '#e43f5a',
     padding: 15,
     borderRadius: 10,
     alignSelf: 'center',
@@ -499,7 +503,7 @@ const styles = StyleSheet.create({
     borderColor: '#fff',
   },
   secondaryButton: {
-    backgroundColor: '#1f4068', // Secondary color
+    backgroundColor: '#1f4068',
   },
   buttonText: {
     fontSize: 18,
@@ -642,6 +646,5 @@ const styles = StyleSheet.create({
     borderColor: '#e43f5a',
   },
 });
- 
+
 export default App;
- 
