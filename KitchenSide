@@ -8,72 +8,97 @@ import {
   TouchableOpacity,
   Alert
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import{ createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
+
 const SUPABASE_URL = "https://tbfhhplpwqelstuzmlmh.supabase.co";
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Kitchen Display Screen - STANDALONE COMPONENT
+// Kitchen Display Screen
 const KitchenScreen = () => {
   const [orders, setOrders] = useState([]);
- 
-  // Load orders every 3 seconds
+
+  // Load orders from Supabase every 3 seconds
   useEffect(() => {
     const loadOrders = async () => {
       try {
-        const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
-        if (kitchenOrders) {
-          const allOrders = JSON.parse(kitchenOrders);
-          // Show only pending/preparing/ready orders (not completed)
-          const activeOrders = allOrders.filter(order =>
-            order.status !== 'completed'
-          );
-          setOrders(activeOrders);
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error("Supabase fetch error:", error);
+          return;
         }
+
+        // Only show non-completed orders
+        const activeOrders = data.filter(order => order.status !== 'completed');
+        setOrders(activeOrders);
+
       } catch (error) {
-        console.error('Error loading kitchen orders:', error);
+        console.error("Error loading orders:", error);
       }
     };
- 
-    loadOrders(); // Load immediately
-    const interval = setInterval(loadOrders, 3000); // Then every 3 seconds
-   
-    return () => clearInterval(interval); // Cleanup on unmount
+
+    loadOrders(); 
+    const interval = setInterval(loadOrders, 3000);
+
+    return () => clearInterval(interval);
   }, []);
- 
+
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
-      const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
-      if (kitchenOrders) {
-        const orders = JSON.parse(kitchenOrders);
-        const updatedOrders = orders.map(order =>
-          order.id === orderId ? { ...order, status: newStatus } : order
-        );
-        await AsyncStorage.setItem('kitchenOrders', JSON.stringify(updatedOrders));
-        setOrders(updatedOrders.filter(order => order.status !== 'completed'));
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
+      if (error) {
+        console.error("Supabase update error:", error);
+        Alert.alert("Error", "Failed to update order status");
+        return;
       }
+
+      // Reload orders after update
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      setOrders(data.filter(order => order.status !== 'completed'));
+
     } catch (error) {
       Alert.alert("Error", "Failed to update order status");
     }
   };
- 
+
   const clearCompletedOrders = async () => {
     try {
-      const kitchenOrders = await AsyncStorage.getItem('kitchenOrders');
-      if (kitchenOrders) {
-        const orders = JSON.parse(kitchenOrders);
-        // Keep only active orders (remove completed)
-        const activeOrders = orders.filter(order => order.status !== 'completed');
-        await AsyncStorage.setItem('kitchenOrders', JSON.stringify(activeOrders));
-        setOrders(activeOrders);
+      const { error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('status', 'completed');
+
+      if (error) {
+        console.error("Supabase delete error:", error);
+        Alert.alert("Error", "Failed to clear completed orders");
+        return;
       }
+
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      setOrders(data.filter(order => order.status !== 'completed'));
+
     } catch (error) {
       Alert.alert("Error", "Failed to clear completed orders");
     }
   };
- 
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'ready': return '#00ff00';
@@ -82,7 +107,7 @@ const KitchenScreen = () => {
       default: return '#ff4444';
     }
   };
- 
+
   const getStatusText = (status) => {
     switch (status) {
       case 'ready': return 'READY FOR PICKUP';
@@ -91,22 +116,19 @@ const KitchenScreen = () => {
       default: return status.toUpperCase();
     }
   };
- 
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>KITCHEN DISPLAY</Text>
-       
+        
         <View style={styles.headerRow}>
           <Text style={styles.orderCount}>Active Orders: {orders.length}</Text>
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={clearCompletedOrders}
-          >
+          <TouchableOpacity style={styles.clearButton} onPress={clearCompletedOrders}>
             <Text style={styles.clearButtonText}>Clear Completed</Text>
           </TouchableOpacity>
         </View>
- 
+
         {orders.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No active orders</Text>
@@ -114,25 +136,30 @@ const KitchenScreen = () => {
           </View>
         ) : (
           orders.map((order) => (
-            <View key={order.id} style={[
-              styles.kitchenOrderCard,
-              { borderLeftColor: getStatusColor(order.status) }
-            ]}>
+            <View
+              key={order.id}
+              style={[
+                styles.kitchenOrderCard,
+                { borderLeftColor: getStatusColor(order.status) }
+              ]}
+            >
               <View style={styles.orderHeader}>
                 <View>
                   <Text style={styles.orderId}>Order #{order.id.toString().slice(-4)}</Text>
-                  <Text style={styles.orderTime}>{order.date}</Text>
+                  <Text style={styles.orderTime}>
+                    {new Date(order.created_at).toLocaleString()}
+                  </Text>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
                   <Text style={styles.statusBadgeText}>{getStatusText(order.status)}</Text>
                 </View>
               </View>
-             
+
               <View style={styles.customerInfo}>
                 <Text style={styles.customerLabel}>Customer:</Text>
-                <Text style={styles.customerName}>{order.customerName}</Text>
+                <Text style={styles.customerName}>{order.customer_name}</Text>
               </View>
-             
+
               <View style={styles.itemsSection}>
                 <Text style={styles.itemsLabel}>Items:</Text>
                 {order.items.map((item, index) => (
@@ -142,39 +169,39 @@ const KitchenScreen = () => {
                   </View>
                 ))}
               </View>
-             
+
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total:</Text>
                 <Text style={styles.totalAmount}>${order.total}</Text>
               </View>
-             
+
               <View style={styles.actionButtons}>
                 <TouchableOpacity
                   style={[
                     styles.actionButton,
-                    { backgroundColor: order.status === 'pending' ? '#ffa500' : '#cccccc' }
+                    { backgroundColor: order.status === 'pending' ? '#ffa500' : '#666' }
                   ]}
                   onPress={() => updateOrderStatus(order.id, 'preparing')}
                   disabled={order.status !== 'pending'}
                 >
                   <Text style={styles.actionButtonText}>Start Cooking</Text>
                 </TouchableOpacity>
-               
+
                 <TouchableOpacity
                   style={[
                     styles.actionButton,
-                    { backgroundColor: order.status === 'preparing' ? '#00ff00' : '#cccccc' }
+                    { backgroundColor: order.status === 'preparing' ? '#00ff00' : '#666' }
                   ]}
                   onPress={() => updateOrderStatus(order.id, 'ready')}
                   disabled={order.status !== 'preparing'}
                 >
                   <Text style={styles.actionButtonText}>Mark Ready</Text>
                 </TouchableOpacity>
-               
+
                 <TouchableOpacity
                   style={[
                     styles.actionButton,
-                    { backgroundColor: order.status === 'ready' ? '#238636' : '#cccccc' }
+                    { backgroundColor: order.status === 'ready' ? '#238636' : '#666' }
                   ]}
                   onPress={() => updateOrderStatus(order.id, 'completed')}
                   disabled={order.status !== 'ready'}
@@ -189,8 +216,8 @@ const KitchenScreen = () => {
     </SafeAreaView>
   );
 };
- 
-// Styles for Kitchen Display ONLY
+
+// Styles stay the same
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -360,6 +387,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
- 
+
 export default KitchenScreen;
- 
