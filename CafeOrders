@@ -1,42 +1,232 @@
-import React, { useState, useEffect } from 'react';
-import { Platform, SafeAreaView, ScrollView, Text, StyleSheet, View, TouchableOpacity, Image, ImageBackground, Modal, Alert, TextInput } from 'react-native';
+// App.js - Complete Optimized GitGrub Application
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  Text,
+  StyleSheet,
+  View,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  ActivityIndicator
+} from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
 // ----------------------------
-// SUPABASE INITIALIZATION
+// CONSTANTS & CONFIGURATION
 // ----------------------------
-const supabase = createClient(
-  'https://tbfhhplpwqelstuzmlmh.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw'
-);
-
-// ----------------------------
-// SEND ORDER TO SUPABASE
-// ----------------------------
-const sendOrderToSupabase = async (order) => {
-  const { data, error } = await supabase.from('orders').insert([
-    {
-      custumerName: order.customerName,
-      Order_items: order.items,
-      total_price: order.total,
-      status: 'pending'
-    }
-  ]);
-
-  if (error) {
-    console.error('Supabase Error:', error);
-    return false;
-  }
-
-  return true;
+const Colors = {
+  primary: '#975dfe',
+  secondary: '#1f4068',
+  background: '#162447',
+  white: '#FFFFFF',
+  black: '#1a1a2e',
+  success: '#4CAF50',
+  warning: '#FFA500',
+  error: '#FF5252',
+  cardBackground: 'rgba(255, 255, 255, 0.1)',
+  textSecondary: 'rgba(255, 255, 255, 0.7)',
 };
 
-// --------------------------------
-// LOGO COMPONENT
-// --------------------------------
+const MenuItems = {
+  pizza: [
+    { id: 1, name: "Cheese Pizza", price: 6.00, category: 'pizza' },
+    { id: 2, name: "Pepperoni Pizza", price: 7.00, category: 'pizza' },
+    { id: 3, name: "Pepperoni and Sausage Pizza", price: 8.00, category: 'pizza' },
+  ],
+  sandwiches: [
+    { id: 4, name: "Chicken Sandwich", price: 5.00, category: 'sandwiches' },
+    { id: 5, name: "Grilled Cheese Sandwich", price: 5.00, category: 'sandwiches' },
+  ],
+  wings: [
+    { id: 6, name: "6 Piece Wings", price: 8.00, category: 'wings' },
+    { id: 7, name: "12 Piece Wings", price: 15.00, category: 'wings' },
+  ],
+  drinks: [
+    { id: 8, name: "Soda", price: 2.50, category: 'drinks' },
+    { id: 9, name: "Bottled Water", price: 1.50, category: 'drinks' },
+  ]
+};
+
+const allMenuItems = Object.values(MenuItems).flat();
+
+const Config = {
+  SUPABASE_URL: 'https://tbfhhplpwqelstuzmlmh.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw'
+};
+
+// ----------------------------
+// SUPABASE CLIENT
+// ----------------------------
+const supabase = createClient(Config.SUPABASE_URL, Config.SUPABASE_ANON_KEY);
+
+// ----------------------------
+// SERVICES
+// ----------------------------
+const OrderService = {
+  async sendOrderToSupabase(order) {
+    try {
+      const { data, error } = await supabase.from('orders').insert([
+        {
+          customerName: order.customerName,
+          order_items: order.items,
+          total_price: order.total,
+          status: 'pending',
+          order_date: new Date().toISOString(),
+        }
+      ]).select();
+
+      if (error) {
+        console.error('Supabase Error:', error);
+        return { success: false, error };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      console.error('Order Service Error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async saveOrderToHistory(order) {
+    try {
+      const orderWithMeta = {
+        ...order,
+        id: Date.now(),
+        date: new Date().toLocaleString(),
+        status: 'completed'
+      };
+
+      const existingHistory = await AsyncStorage.getItem('orderHistory');
+      const history = existingHistory ? JSON.parse(existingHistory) : [];
+      
+      const updatedHistory = [orderWithMeta, ...history].slice(0, 50);
+      
+      await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
+      return { success: true };
+    } catch (error) {
+      console.error('Save History Error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getOrderHistory() {
+    try {
+      const history = await AsyncStorage.getItem('orderHistory');
+      return history ? JSON.parse(history) : [];
+    } catch (error) {
+      console.error('Get History Error:', error);
+      return [];
+    }
+  }
+};
+
+// ----------------------------
+// CUSTOM HOOKS
+// ----------------------------
+const useAuth = () => {
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    checkUser();
+  }, []);
+
+  const checkUser = async () => {
+    try {
+      const userData = await AsyncStorage.getItem('user');
+      setUser(userData ? JSON.parse(userData) : null);
+    } catch (error) {
+      console.error('Auth error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const login = async (userData) => {
+    try {
+      await AsyncStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+      return true;
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await AsyncStorage.removeItem('user');
+      setUser(null);
+      return true;
+    } catch (error) {
+      console.error('Logout error:', error);
+      return false;
+    }
+  };
+
+  return { user, isLoading, login, logout };
+};
+
+const useCart = () => {
+  const [cart, setCart] = useState([]);
+
+  const addToCart = useCallback((item) => {
+    setCart(prev => [...prev, { 
+      ...item, 
+      cartId: Date.now() + Math.random(),
+      quantity: 1
+    }]);
+  }, []);
+
+  const removeFromCart = useCallback((cartId) => {
+    setCart(prev => prev.filter(item => item.cartId !== cartId));
+  }, []);
+
+  const updateQuantity = useCallback((cartId, newQuantity) => {
+    if (newQuantity < 1) {
+      removeFromCart(cartId);
+      return;
+    }
+    
+    setCart(prev => prev.map(item =>
+      item.cartId === cartId ? { ...item, quantity: newQuantity } : item
+    ));
+  }, [removeFromCart]);
+
+  const clearCart = useCallback(() => {
+    setCart([]);
+  }, []);
+
+  const total = useMemo(() => 
+    cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2), 
+    [cart]
+  );
+
+  const itemCount = useMemo(() => 
+    cart.reduce((count, item) => count + item.quantity, 0), 
+    [cart]
+  );
+
+  return {
+    cart,
+    addToCart,
+    removeFromCart,
+    updateQuantity,
+    clearCart,
+    total,
+    itemCount
+  };
+};
+
+// ----------------------------
+// REUSABLE COMPONENTS
+// ----------------------------
 const GitGrubLogo = ({ size = 150, style }) => (
   <View style={[styles.logoContainer, style]}>
     <Text style={[styles.logoText, { fontSize: size * 0.4 }]}>GitGrub</Text>
@@ -44,31 +234,94 @@ const GitGrubLogo = ({ size = 150, style }) => (
   </View>
 );
 
-// --------------------------------
-// LOGIN SCREEN
-// --------------------------------
+const LoadingSpinner = ({ message = "Loading..." }) => (
+  <View style={styles.loadingContainer}>
+    <ActivityIndicator size="large" color={Colors.primary} />
+    <Text style={styles.loadingText}>{message}</Text>
+  </View>
+);
+
+const MenuItem = ({ item, onAddToCart }) => (
+  <TouchableOpacity 
+    style={styles.menuItemButton} 
+    onPress={() => onAddToCart(item)}
+  >
+    <Text style={styles.menuItem}>
+      {item.name} - ${item.price.toFixed(2)}
+    </Text>
+  </TouchableOpacity>
+);
+
+const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
+  <View style={styles.cartItem}>
+    <View style={styles.cartItemInfo}>
+      <Text style={styles.cartItemText}>{item.name}</Text>
+      <Text style={styles.cartItemPrice}>${item.price.toFixed(2)}</Text>
+    </View>
+    
+    <View style={styles.quantityContainer}>
+      <TouchableOpacity 
+        style={styles.quantityButton}
+        onPress={() => onUpdateQuantity(item.cartId, item.quantity - 1)}
+      >
+        <Text style={styles.quantityButtonText}>-</Text>
+      </TouchableOpacity>
+      
+      <Text style={styles.quantityText}>{item.quantity}</Text>
+      
+      <TouchableOpacity 
+        style={styles.quantityButton}
+        onPress={() => onUpdateQuantity(item.cartId, item.quantity + 1)}
+      >
+        <Text style={styles.quantityButtonText}>+</Text>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={styles.removeButton}
+        onPress={() => onRemove(item.cartId)}
+      >
+        <Text style={styles.removeItemText}>🗑️</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+);
+
+// ----------------------------
+// SCREENS
+// ----------------------------
 const LoginScreen = ({ navigation }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
 
   const handleLogin = async () => {
-    if (username && password) {
-      try {
-        await AsyncStorage.setItem('user', JSON.stringify({ username }));
-        navigation.navigate('Home');
-      } catch (error) {
-        Alert.alert("Error", "Failed to save user data");
-      }
-    } else {
+    if (!username.trim() || !password.trim()) {
       Alert.alert("Error", "Please enter both username and password");
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      const success = await login({ username, email: `${username}@gitgrub.com` });
+      
+      if (success) {
+        navigation.navigate('Home');
+      } else {
+        Alert.alert("Error", "Failed to login. Please try again.");
+      }
+    } catch (error) {
+      Alert.alert("Error", "An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <View style={[styles.container, styles.background]}>
+    <View style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
-
           <GitGrubLogo size={180} style={styles.logo} />
 
           <Text style={styles.title}>Login to GitGrub</Text>
@@ -79,6 +332,7 @@ const LoginScreen = ({ navigation }) => {
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
+            editable={!isLoading}
           />
 
           <TextInput
@@ -87,30 +341,159 @@ const LoginScreen = ({ navigation }) => {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            editable={!isLoading}
           />
 
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, isLoading && { opacity: 0.6 }]}
             onPress={handleLogin}
+            disabled={isLoading}
           >
-            <Text style={styles.buttonText}>Login</Text>
+            <Text style={styles.buttonText}>
+              {isLoading ? "Logging in..." : "Login"}
+            </Text>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Register')}
+          >
+            <Text style={{ color: Colors.primary, textAlign: 'center', marginTop: 15 }}>
+              Don't have an account? Register
+            </Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 };
 
-// --------------------------------
-// HOME SCREEN
-// --------------------------------
-const HomeScreen = ({ navigation }) => {
+const RegisterScreen = ({ navigation }) => {
+  const [form, setForm] = useState({ 
+    username: '', 
+    email: '', 
+    password: '', 
+    confirmPassword: '' 
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
+
+  const handleRegister = async () => {
+    if (!form.username.trim() || !form.email.trim() || !form.password.trim()) {
+      Alert.alert("Error", "Please fill in all fields");
+      return;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      Alert.alert("Error", "Passwords do not match");
+      return;
+    }
+
+    if (form.password.length < 6) {
+      Alert.alert("Error", "Password must be at least 6 characters");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const success = await login({ 
+        username: form.username, 
+        email: form.email 
+      });
+      
+      if (success) {
+        Alert.alert("Success", "Account created successfully!");
+        navigation.navigate('Home');
+      } else {
+        Alert.alert("Error", "Failed to create account. Please try again.");
+      }
+    } catch (error) {
+      Alert.alert("Error", "An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <View style={[styles.container, styles.background]}>
+    <View style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={160} style={styles.logo} />
 
+          <Text style={styles.title}>Create Account</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={form.username}
+            onChangeText={(text) => setForm(prev => ({ ...prev, username: text }))}
+            autoCapitalize="none"
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            value={form.email}
+            onChangeText={(text) => setForm(prev => ({ ...prev, email: text }))}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={form.password}
+            onChangeText={(text) => setForm(prev => ({ ...prev, password: text }))}
+            secureTextEntry
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm Password"
+            value={form.confirmPassword}
+            onChangeText={(text) => setForm(prev => ({ ...prev, confirmPassword: text }))}
+            secureTextEntry
+            editable={!isLoading}
+          />
+
+          <TouchableOpacity
+            style={[styles.button, isLoading && { opacity: 0.6 }]}
+            onPress={handleRegister}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>
+              {isLoading ? "Creating Account..." : "Register"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Login')}
+          >
+            <Text style={{ color: Colors.primary, textAlign: 'center', marginTop: 15 }}>
+              Already have an account? Login
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const HomeScreen = ({ navigation }) => {
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigation.navigate('Login');
+  };
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={160} style={styles.logo} />
 
           <Text style={styles.title}>Welcome to GitGrub</Text>
@@ -118,6 +501,12 @@ const HomeScreen = ({ navigation }) => {
           <Text style={styles.introText}>
             Late night food for hungry developers
           </Text>
+
+          {user && (
+            <View style={styles.profileInfo}>
+              <Text style={styles.profileText}>Welcome, {user.username}!</Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={styles.button}
@@ -133,40 +522,66 @@ const HomeScreen = ({ navigation }) => {
             <Text style={styles.buttonText}>View Order History</Text>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('Profile')}
+          >
+            <Text style={styles.buttonText}>Profile</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: Colors.error }]}
+            onPress={handleLogout}
+          >
+            <Text style={styles.buttonText}>Logout</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     </View>
   );
 };
 
-// --------------------------------
-// MENU SCREEN (with cart + SUPABASE checkout)
-// --------------------------------
 const MenuScreen = ({ navigation }) => {
-  const [cart, setCart] = useState([]);
+  const {
+    cart,
+    addToCart,
+    removeFromCart,
+    updateQuantity,
+    clearCart,
+    total,
+    itemCount
+  } = useCart();
+  
   const [customerName, setCustomerName] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
-  const addToCart = (item) => {
-    setCart([...cart, item]);
-  };
+  const categories = [
+    { key: 'all', label: 'All' },
+    { key: 'pizza', label: 'Pizza' },
+    { key: 'sandwiches', label: 'Sandwiches' },
+    { key: 'wings', label: 'Wings' },
+    { key: 'drinks', label: 'Drinks' },
+  ];
 
-  const removeFromCart = (index) => {
-    const newCart = [...cart];
-    newCart.splice(index, 1);
-    setCart(newCart);
-  };
+  const filteredItems = useMemo(() => {
+    let filtered = allMenuItems;
+    
+    if (searchQuery) {
+      filtered = filtered.filter(item =>
+        item.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    if (selectedCategory !== 'all') {
+      filtered = filtered.filter(item => item.category === selectedCategory);
+    }
+    
+    return filtered;
+  }, [searchQuery, selectedCategory]);
 
-  const calculateTotal = () => {
-    return cart.reduce((total, item) => {
-      const price = parseFloat(item.price.replace('$', ''));
-      return total + price;
-    }, 0).toFixed(2);
-  };
-
-  // ----------------------------
-  // SUPABASE-INTEGRATED CHECKOUT
-  // ----------------------------
   const handleCheckout = async () => {
     if (cart.length === 0) {
       Alert.alert("Empty Cart", "Your cart is empty. Please add items before checkout.");
@@ -178,178 +593,240 @@ const MenuScreen = ({ navigation }) => {
       return;
     }
 
+    setIsCheckingOut(true);
+
     try {
       const order = {
         items: cart,
-        total: calculateTotal(),
-        customerName
+        total: total,
+        customerName: customerName.trim()
       };
 
-      // Save to local order history
-      const existingHistory = await AsyncStorage.getItem('orderHistory');
-      const history = existingHistory ? JSON.parse(existingHistory) : [];
-      await AsyncStorage.setItem('orderHistory', JSON.stringify([
-        ...history,
-        {
-          ...order,
-          id: Date.now(),
-          date: new Date().toLocaleString()
-        }
-      ]));
+      // Save to local history
+      const historyResult = await OrderService.saveOrderToHistory(order);
+      
+      if (!historyResult.success) {
+        throw new Error('Failed to save order history');
+      }
 
-      // Send to Supabase kitchen orders
-      const success = await sendOrderToSupabase(order);
-
-      if (!success) throw new Error("Supabase error");
-
-      // Reset UI
-      setCart([]);
+      // Send to Supabase
+      const supabaseResult = await OrderService.sendOrderToSupabase(order);
+      
+      // Clear cart and reset
+      clearCart();
       setCustomerName('');
+      setShowNameInput(false);
 
-      Alert.alert(
-        "Order Confirmed!",
-        `Thank you, ${customerName}! Your order total is $${calculateTotal()}`
-      );
-
+      if (supabaseResult.success) {
+        Alert.alert(
+          "Order Confirmed! 🎉",
+          `Thank you, ${customerName}! Your order total is $${total}`,
+          [
+            {
+              text: "View Order Status",
+              onPress: () => navigation.navigate('OrderStatus')
+            },
+            { text: "OK", style: "default" }
+          ]
+        );
+      } else {
+        Alert.alert(
+          "Order Submitted Locally",
+          "Your order was saved but couldn't be sent to the kitchen. Total: $" + total
+        );
+      }
     } catch (error) {
       Alert.alert(
-        "Order Submitted",
-        "Your order was saved locally but could not be sent to the kitchen."
+        "Order Error",
+        "There was a problem processing your order. Please try again."
       );
+    } finally {
+      setIsCheckingOut(false);
     }
   };
 
-  return (
-    <View style={[styles.container, styles.background]}>
-      <SafeAreaView style={styles.safeArea}>
+  const renderMenuSection = (category, items) => {
+    const categoryItems = filteredItems.filter(item => item.category === category);
+    if (categoryItems.length === 0 && selectedCategory === 'all') return null;
 
+    return (
+      <View key={category}>
+        <Text style={styles.menuSection}>
+          {category.charAt(0).toUpperCase() + category.slice(1)}:
+        </Text>
+        {categoryItems.map(item => (
+          <MenuItem
+            key={item.id}
+            item={item}
+            onAddToCart={addToCart}
+          />
+        ))}
+        <View style={styles.separator} />
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={120} style={styles.smallLogo} />
           <Text style={styles.title}>GitGrub Menu</Text>
 
+          {/* Search Bar */}
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search menu items..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+
+          {/* Category Filter */}
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={styles.categoryScroll}
+          >
+            {categories.map(category => (
+              <TouchableOpacity
+                key={category.key}
+                style={[
+                  styles.categoryButton,
+                  selectedCategory === category.key && styles.categoryButtonActive
+                ]}
+                onPress={() => setSelectedCategory(category.key)}
+              >
+                <Text style={styles.categoryButtonText}>{category.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Name Input Modal */}
           {showNameInput && (
             <View style={styles.nameInputContainer}>
+              <Text style={{ color: 'white', marginBottom: 10, textAlign: 'center' }}>
+                Please enter your name for the order:
+              </Text>
               <TextInput
                 style={styles.input}
                 placeholder="Enter your name"
                 value={customerName}
                 onChangeText={setCustomerName}
+                autoFocus
               />
-
-              <TouchableOpacity
-                style={[styles.button, { marginTop: 10 }]}
-                onPress={() => {
-                  if (customerName) {
-                    setShowNameInput(false);
-                    handleCheckout();
-                  }
-                }}
-              >
-                <Text style={styles.buttonText}>Confirm Name</Text>
-              </TouchableOpacity>
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={[styles.button, { flex: 1, marginRight: 5 }]}
+                  onPress={() => {
+                    if (customerName.trim()) {
+                      setShowNameInput(false);
+                      handleCheckout();
+                    }
+                  }}
+                  disabled={!customerName.trim()}
+                >
+                  <Text style={styles.buttonText}>Confirm</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.button, styles.secondaryButton, { flex: 1, marginLeft: 5 }]}
+                  onPress={() => setShowNameInput(false)}
+                >
+                  <Text style={styles.buttonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
-          {/* MENU ITEMS */}
+          {/* Menu Items */}
           <View style={styles.menuItemContainer}>
-            <Text style={styles.menuSection}>Pizza Slices:</Text>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Cheese Pizza", price: "$6.00" })}>
-              <Text style={styles.menuItem}>- Cheese: $6.00</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Pepperoni Pizza", price: "$7.00" })}>
-              <Text style={styles.menuItem}>- Pepperoni: $7.00</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Pepperoni and Sausage Pizza", price: "$8.00" })}>
-              <Text style={styles.menuItem}>- Pepperoni and Sausage: $8.00</Text>
-            </TouchableOpacity>
-
-            <View style={styles.separator}></View>
-
-            <Text style={styles.menuSection}>Sandwiches:</Text>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Chicken Sandwich", price: "$5.00" })}>
-              <Text style={styles.menuItem}>- Chicken Sandwich: $5.00</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "Grilled Cheese Sandwich", price: "$5.00" })}>
-              <Text style={styles.menuItem}>- Grilled Cheese Sandwich: $5.00</Text>
-            </TouchableOpacity>
-
-            <View style={styles.separator}></View>
-
-            <Text style={styles.menuSection}>Wings:</Text>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "6 Piece Wings", price: "$8.00" })}>
-              <Text style={styles.menuItem}>- 6 Piece Wings: $8.00</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.menuItemButton} onPress={() => addToCart({ name: "12 Piece Wings", price: "$15.00" })}>
-              <Text style={styles.menuItem}>- 12 Piece Wings: $15.00</Text>
-            </TouchableOpacity>
-
+            {selectedCategory === 'all' ? (
+              Object.keys(MenuItems).map(category => 
+                renderMenuSection(category, MenuItems[category])
+              )
+            ) : (
+              filteredItems.map(item => (
+                <MenuItem
+                  key={item.id}
+                  item={item}
+                  onAddToCart={addToCart}
+                />
+              ))
+            )}
           </View>
         </ScrollView>
 
-        {/* CART SECTION */}
+        {/* Cart Section */}
         <View style={styles.cartContainer}>
-          <Text style={styles.cartTitle}>Your Cart ({cart.length} items)</Text>
+          <Text style={styles.cartTitle}>
+            Your Cart ({itemCount} {itemCount === 1 ? 'item' : 'items'})
+          </Text>
 
           {cart.length > 0 ? (
             <>
-              {cart.map((item, index) => (
-                <View key={index} style={styles.cartItem}>
-                  <Text style={styles.cartItemText}>{item.name} - {item.price}</Text>
-                  <TouchableOpacity onPress={() => removeFromCart(index)}>
-                    <Text style={styles.removeItemText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+              <ScrollView style={{ maxHeight: 200 }}>
+                {cart.map((item) => (
+                  <CartItem
+                    key={item.cartId}
+                    item={item}
+                    onRemove={removeFromCart}
+                    onUpdateQuantity={updateQuantity}
+                  />
+                ))}
+              </ScrollView>
 
-              <Text style={styles.cartTotal}>Total: ${calculateTotal()}</Text>
+              <Text style={styles.cartTotal}>Total: ${total}</Text>
+
+              <TouchableOpacity
+                style={[styles.button, isCheckingOut && { opacity: 0.6 }]}
+                onPress={handleCheckout}
+                disabled={isCheckingOut}
+              >
+                <Text style={styles.buttonText}>
+                  {isCheckingOut ? "Processing..." : "Checkout"}
+                </Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.button, styles.secondaryButton]}
-                onPress={handleCheckout}
+                onPress={clearCart}
               >
-                <Text style={styles.buttonText}>Checkout</Text>
+                <Text style={styles.buttonText}>Clear Cart</Text>
               </TouchableOpacity>
             </>
           ) : (
             <Text style={styles.emptyCartText}>Your cart is empty</Text>
           )}
         </View>
-
       </SafeAreaView>
     </View>
   );
 };
 
-// --------------------------------
-// ORDER HISTORY SCREEN
-// --------------------------------
 const OrderHistoryScreen = () => {
   const [orderHistory, setOrderHistory] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const loadOrderHistory = async () => {
-      try {
-        const history = await AsyncStorage.getItem('orderHistory');
-        if (history) {
-          setOrderHistory(JSON.parse(history));
-        }
-      } catch (error) {
-        Alert.alert("Error", "Failed to load order history");
-      }
-    };
-
     loadOrderHistory();
   }, []);
 
+  const loadOrderHistory = async () => {
+    try {
+      const history = await OrderService.getOrderHistory();
+      setOrderHistory(history);
+    } catch (error) {
+      Alert.alert("Error", "Failed to load order history");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading order history..." />;
+  }
+
   return (
-    <View style={[styles.container, styles.background]}>
+    <View style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={120} style={styles.smallLogo} />
@@ -360,10 +837,11 @@ const OrderHistoryScreen = () => {
               <View key={order.id} style={styles.orderCard}>
                 <Text style={styles.orderDate}>{order.date}</Text>
                 <Text style={styles.orderCustomer}>Name: {order.customerName}</Text>
+                <Text style={styles.orderStatus}>Status: {order.status}</Text>
 
                 {order.items.map((item, index) => (
                   <Text key={index} style={styles.orderItem}>
-                    {item.name} - {item.price}
+                    {item.quantity}x {item.name} - ${item.price.toFixed(2)}
                   </Text>
                 ))}
 
@@ -379,31 +857,134 @@ const OrderHistoryScreen = () => {
   );
 };
 
-// --------------------------------
-// NAVIGATION SETUP
-// --------------------------------
+const ProfileScreen = ({ navigation }) => {
+  const { user, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigation.navigate('Login');
+  };
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={120} style={styles.smallLogo} />
+          <Text style={styles.title}>Your Profile</Text>
+
+          <View style={styles.profileInfo}>
+            <Text style={styles.profileText}>Username: {user?.username}</Text>
+            <Text style={styles.profileText}>Email: {user?.email}</Text>
+            <Text style={styles.profileText}>Member since: 2025</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('OrderHistory')}
+          >
+            <Text style={styles.buttonText}>View Order History</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: Colors.error }]}
+            onPress={handleLogout}
+          >
+            <Text style={styles.buttonText}>Logout</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const OrderStatusScreen = () => {
+  const [orders, setOrders] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  const loadOrders = async () => {
+    try {
+      const history = await OrderService.getOrderHistory();
+      setOrders(history.slice(0, 5)); // Show last 5 orders
+    } catch (error) {
+      console.error('Error loading orders:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    const statusColors = {
+      pending: Colors.warning,
+      preparing: Colors.secondary,
+      ready: Colors.primary,
+      completed: Colors.success,
+    };
+    return statusColors[status] || Colors.primary;
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading orders..." />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={120} style={styles.smallLogo} />
+          <Text style={styles.title}>Order Status</Text>
+
+          {orders.length > 0 ? (
+            orders.map((order) => (
+              <View key={order.id} style={[
+                styles.orderCard,
+                { borderLeftColor: getStatusColor(order.status) }
+              ]}>
+                <View style={styles.row}>
+                  <Text style={styles.orderDate}>{order.date}</Text>
+                  <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
+                    {order.status.toUpperCase()}
+                  </Text>
+                </View>
+                <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                
+                {order.items.map((item, index) => (
+                  <Text key={index} style={styles.orderItem}>
+                    {item.quantity}x {item.name}
+                  </Text>
+                ))}
+
+                <Text style={styles.orderTotal}>Total: ${order.total}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptyHistoryText}>No recent orders found</Text>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+// ----------------------------
+// NAVIGATION & MAIN APP
+// ----------------------------
 const Stack = createStackNavigator();
 
 const App = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user, isLoading } = useAuth();
 
-  useEffect(() => {
-    const checkLoginStatus = async () => {
-      try {
-        const user = await AsyncStorage.getItem('user');
-        setIsLoggedIn(!!user);
-      } catch (error) {
-        console.error("Error checking login status:", error);
-      }
-    };
-
-    checkLoginStatus();
-  }, []);
+  if (isLoading) {
+    return <LoadingSpinner />;
+  }
 
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName={isLoggedIn ? "Home" : "Login"}
+        initialRouteName={user ? "Home" : "Login"}
         screenOptions={{
           headerStyle: {
             backgroundColor: '#1a1a2e',
@@ -415,23 +996,24 @@ const App = () => {
         }}
       >
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'GitGrub' }} />
         <Stack.Screen name="Menu" component={MenuScreen} options={{ title: 'Menu' }} />
         <Stack.Screen name="OrderHistory" component={OrderHistoryScreen} options={{ title: 'Order History' }} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
+        <Stack.Screen name="OrderStatus" component={OrderStatusScreen} options={{ title: 'Order Status' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
 };
 
-// --------------------------------
-// STYLES (no changes from your original)
-// --------------------------------
+// ----------------------------
+// STYLES
+// ----------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  background: {
-    backgroundColor: '#162447',
+    backgroundColor: Colors.background,
   },
   safeArea: {
     flex: 1,
@@ -446,18 +1028,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 30,
     padding: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: Colors.cardBackground,
     borderRadius: 15,
     borderWidth: 2,
-    borderColor: '#e43f5a',
+    borderColor: Colors.primary,
   },
   logoText: {
     fontWeight: 'bold',
-    color: '#e43f5a',
+    color: Colors.primary,
     textAlign: 'center',
   },
   establishedText: {
-    color: '#fff',
+    color: Colors.white,
     marginTop: 5,
     fontStyle: 'italic',
   },
@@ -470,28 +1052,28 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#e43f5a',
+    color: Colors.primary,
     marginBottom: 20,
     textAlign: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: Colors.cardBackground,
     padding: 15,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e43f5a',
+    borderColor: Colors.primary,
   },
   introText: {
     fontSize: 18,
-    color: '#FFFFFF',
+    color: Colors.white,
     marginBottom: 30,
     textAlign: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: Colors.cardBackground,
     padding: 15,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1f4068',
+    borderColor: Colors.secondary,
   },
   button: {
-    backgroundColor: '#e43f5a',
+    backgroundColor: Colors.primary,
     padding: 15,
     borderRadius: 10,
     alignSelf: 'center',
@@ -500,15 +1082,39 @@ const styles = StyleSheet.create({
     width: '80%',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#fff',
+    borderColor: Colors.white,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
   },
   secondaryButton: {
-    backgroundColor: '#1f4068',
+    backgroundColor: Colors.secondary,
   },
   buttonText: {
     fontSize: 18,
-    color: '#FFFFFF',
+    color: Colors.white,
     fontWeight: 'bold',
+  },
+  input: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 15,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    fontSize: 16,
+  },
+  searchInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    fontSize: 16,
   },
   menuItemContainer: {
     marginBottom: 20,
@@ -517,21 +1123,21 @@ const styles = StyleSheet.create({
   menuSection: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
+    color: Colors.white,
     marginTop: 15,
     marginBottom: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: Colors.cardBackground,
     padding: 12,
     borderRadius: 10,
     borderLeftWidth: 4,
-    borderLeftColor: '#e43f5a',
+    borderLeftColor: Colors.primary,
   },
   menuItemButton: {
     marginBottom: 8,
   },
   menuItem: {
     fontSize: 18,
-    color: '#FFFFFF',
+    color: Colors.white,
     padding: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: 8,
@@ -543,25 +1149,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     marginVertical: 15,
   },
-  input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#e43f5a',
-  },
   cartContainer: {
-    backgroundColor: 'rgba(31, 64, 104, 0.9)',
+    backgroundColor: 'rgba(31, 64, 104, 0.95)',
     padding: 15,
     borderTopWidth: 2,
-    borderTopColor: '#e43f5a',
+    borderTopColor: Colors.primary,
   },
   cartTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: 'white',
+    color: Colors.white,
     marginBottom: 10,
     textAlign: 'center',
   },
@@ -569,32 +1166,66 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-    padding: 8,
+    marginBottom: 12,
+    padding: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 5,
+    borderRadius: 8,
+  },
+  cartItemInfo: {
+    flex: 1,
   },
   cartItemText: {
     fontSize: 16,
-    color: 'white',
-    flex: 1,
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  cartItemPrice: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  quantityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  quantityButton: {
+    backgroundColor: Colors.primary,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quantityButtonText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  quantityText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+    minWidth: 20,
+    textAlign: 'center',
+  },
+  removeButton: {
+    padding: 5,
   },
   removeItemText: {
-    fontSize: 14,
-    color: '#e43f5a',
-    fontWeight: 'bold',
+    fontSize: 16,
   },
   cartTotal: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: 'white',
+    color: Colors.white,
     marginTop: 10,
     marginBottom: 15,
     textAlign: 'center',
   },
   emptyCartText: {
     fontSize: 16,
-    color: 'white',
+    color: Colors.white,
     textAlign: 'center',
     marginVertical: 10,
     fontStyle: 'italic',
@@ -605,37 +1236,91 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
     borderLeftWidth: 4,
-    borderLeftColor: '#e43f5a',
+    borderLeftColor: Colors.primary,
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
   },
   orderDate: {
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 5,
-    color: '#1a1a2e',
+    color: Colors.black,
   },
   orderCustomer: {
     fontSize: 16,
     marginBottom: 10,
-    color: '#1a1a2e',
+    color: Colors.black,
+    fontWeight: '600',
+  },
+  orderStatus: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 5,
   },
   orderItem: {
     fontSize: 14,
     marginLeft: 10,
     marginBottom: 5,
-    color: '#1a1a2e',
+    color: Colors.black,
   },
   orderTotal: {
     fontSize: 16,
     fontWeight: 'bold',
     marginTop: 10,
-    color: '#e43f5a',
+    color: Colors.primary,
   },
   emptyHistoryText: {
     fontSize: 18,
-    color: 'white',
+    color: Colors.white,
     textAlign: 'center',
     marginTop: 50,
     fontStyle: 'italic',
+  },
+  profileInfo: {
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  profileText: {
+    fontSize: 16,
+    color: Colors.white,
+    marginBottom: 10,
+  },
+  categoryScroll: {
+    marginBottom: 15,
+  },
+  categoryButton: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    backgroundColor: Colors.secondary,
+    borderRadius: 20,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  categoryButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  categoryButtonText: {
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: Colors.white,
   },
   nameInputContainer: {
     backgroundColor: 'rgba(31, 64, 104, 0.9)',
@@ -643,7 +1328,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#e43f5a',
+    borderColor: Colors.primary,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 });
 
