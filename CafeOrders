@@ -1,4 +1,4 @@
-// App.js - Complete Optimized GitGrub Application
+// App.js - Complete Fixed Ordering Side
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Platform,
@@ -66,29 +66,68 @@ const Config = {
 const supabase = createClient(Config.SUPABASE_URL, Config.SUPABASE_ANON_KEY);
 
 // ----------------------------
-// SERVICES
+// SERVICES - FIXED
 // ----------------------------
 const OrderService = {
+  async checkKitchenStatus() {
+    try {
+      console.log('🔍 Checking kitchen status...');
+      const { data, error } = await supabase
+        .from('kitchens')
+        .select('*')
+        .eq('id', 'fe7566a9-948e-49a5-99a0-fce471acb649')
+        .single();
+
+      if (error) {
+        console.error('❌ Kitchen status error:', error);
+        return { isOpen: false, error };
+      }
+
+      console.log('✅ Kitchen found:', data);
+      return { isOpen: data?.is_open || false, error: null };
+    } catch (error) {
+      console.error('❌ Kitchen check error:', error);
+      return { isOpen: false, error };
+    }
+  },
+
   async sendOrderToSupabase(order) {
     try {
+      console.log('🔄 Sending order to Supabase...', order);
+
+      // First, verify kitchen is open
+      const kitchenCheck = await this.checkKitchenStatus();
+      
+      if (!kitchenCheck.isOpen) {
+        console.log('❌ Kitchen is closed - blocking order');
+        return { 
+          success: false, 
+          error: { message: 'KITCHEN_CLOSED: Kitchen is currently closed' } 
+        };
+      }
+
+      console.log('✅ Kitchen is open - proceeding with order');
+
       const { data, error } = await supabase.from('orders').insert([
         {
-          customerName: order.customerName,
-          order_items: order.items,
-          total_price: order.total,
+          customer_name: order.customerName,
+          order_items: JSON.stringify(order.items),
+          total_price: parseFloat(order.total),
           status: 'pending',
-          order_date: new Date().toISOString(),
+          kitchen_id: 'fe7566a9-948e-49a5-99a0-fce471acb649',
+          created_at: new Date().toISOString(),
         }
       ]).select();
 
       if (error) {
-        console.error('Supabase Error:', error);
+        console.error('❌ Order creation error:', error);
         return { success: false, error };
       }
 
+      console.log('✅ Order created successfully:', data);
       return { success: true, data };
     } catch (error) {
-      console.error('Order Service Error:', error);
+      console.error('❌ Order Service Error:', error);
       return { success: false, error };
     }
   },
@@ -287,260 +326,8 @@ const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
 );
 
 // ----------------------------
-// SCREENS
+// ORDERING SIDE - FIXED MENU SCREEN
 // ----------------------------
-const LoginScreen = ({ navigation }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
-
-  const handleLogin = async () => {
-    if (!username.trim() || !password.trim()) {
-      Alert.alert("Error", "Please enter both username and password");
-      return;
-    }
-
-    setIsLoading(true);
-    
-    try {
-      const success = await login({ username, email: `${username}@gitgrub.com` });
-      
-      if (success) {
-        navigation.navigate('Home');
-      } else {
-        Alert.alert("Error", "Failed to login. Please try again.");
-      }
-    } catch (error) {
-      Alert.alert("Error", "An unexpected error occurred");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={180} style={styles.logo} />
-
-          <Text style={styles.title}>Login to GitGrub</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-            editable={!isLoading}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!isLoading}
-          />
-
-          <TouchableOpacity
-            style={[styles.button, isLoading && { opacity: 0.6 }]}
-            onPress={handleLogin}
-            disabled={isLoading}
-          >
-            <Text style={styles.buttonText}>
-              {isLoading ? "Logging in..." : "Login"}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Register')}
-          >
-            <Text style={{ color: Colors.primary, textAlign: 'center', marginTop: 15 }}>
-              Don't have an account? Register
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
-const RegisterScreen = ({ navigation }) => {
-  const [form, setForm] = useState({ 
-    username: '', 
-    email: '', 
-    password: '', 
-    confirmPassword: '' 
-  });
-  const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
-
-  const handleRegister = async () => {
-    if (!form.username.trim() || !form.email.trim() || !form.password.trim()) {
-      Alert.alert("Error", "Please fill in all fields");
-      return;
-    }
-
-    if (form.password !== form.confirmPassword) {
-      Alert.alert("Error", "Passwords do not match");
-      return;
-    }
-
-    if (form.password.length < 6) {
-      Alert.alert("Error", "Password must be at least 6 characters");
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const success = await login({ 
-        username: form.username, 
-        email: form.email 
-      });
-      
-      if (success) {
-        Alert.alert("Success", "Account created successfully!");
-        navigation.navigate('Home');
-      } else {
-        Alert.alert("Error", "Failed to create account. Please try again.");
-      }
-    } catch (error) {
-      Alert.alert("Error", "An unexpected error occurred");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={160} style={styles.logo} />
-
-          <Text style={styles.title}>Create Account</Text>
-
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            value={form.username}
-            onChangeText={(text) => setForm(prev => ({ ...prev, username: text }))}
-            autoCapitalize="none"
-            editable={!isLoading}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={form.email}
-            onChangeText={(text) => setForm(prev => ({ ...prev, email: text }))}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!isLoading}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={form.password}
-            onChangeText={(text) => setForm(prev => ({ ...prev, password: text }))}
-            secureTextEntry
-            editable={!isLoading}
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm Password"
-            value={form.confirmPassword}
-            onChangeText={(text) => setForm(prev => ({ ...prev, confirmPassword: text }))}
-            secureTextEntry
-            editable={!isLoading}
-          />
-
-          <TouchableOpacity
-            style={[styles.button, isLoading && { opacity: 0.6 }]}
-            onPress={handleRegister}
-            disabled={isLoading}
-          >
-            <Text style={styles.buttonText}>
-              {isLoading ? "Creating Account..." : "Register"}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Login')}
-          >
-            <Text style={{ color: Colors.primary, textAlign: 'center', marginTop: 15 }}>
-              Already have an account? Login
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
-const HomeScreen = ({ navigation }) => {
-  const { user, logout } = useAuth();
-
-  const handleLogout = async () => {
-    await logout();
-    navigation.navigate('Login');
-  };
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={160} style={styles.logo} />
-
-          <Text style={styles.title}>Welcome to GitGrub</Text>
-
-          <Text style={styles.introText}>
-            Late night food for hungry developers
-          </Text>
-
-          {user && (
-            <View style={styles.profileInfo}>
-              <Text style={styles.profileText}>Welcome, {user.username}!</Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => navigation.navigate('Menu')}
-          >
-            <Text style={styles.buttonText}>View Menu</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, styles.secondaryButton]}
-            onPress={() => navigation.navigate('OrderHistory')}
-          >
-            <Text style={styles.buttonText}>View Order History</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, styles.secondaryButton]}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <Text style={styles.buttonText}>Profile</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: Colors.error }]}
-            onPress={handleLogout}
-          >
-            <Text style={styles.buttonText}>Logout</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
 const MenuScreen = ({ navigation }) => {
   const {
     cart,
@@ -557,6 +344,8 @@ const MenuScreen = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [isKitchenOpen, setIsKitchenOpen] = useState(false);
+  const [isLoadingKitchen, setIsLoadingKitchen] = useState(true);
 
   const categories = [
     { key: 'all', label: 'All' },
@@ -565,6 +354,30 @@ const MenuScreen = ({ navigation }) => {
     { key: 'wings', label: 'Wings' },
     { key: 'drinks', label: 'Drinks' },
   ];
+
+  // Check kitchen status on component mount
+  useEffect(() => {
+    checkKitchenStatus();
+  }, []);
+
+  const checkKitchenStatus = async () => {
+    try {
+      setIsLoadingKitchen(true);
+      const { isOpen, error } = await OrderService.checkKitchenStatus();
+      
+      if (error) {
+        console.error('Failed to check kitchen status:', error);
+        setIsKitchenOpen(false); // Default to closed for safety
+      } else {
+        setIsKitchenOpen(isOpen);
+      }
+    } catch (error) {
+      console.error('Kitchen status error:', error);
+      setIsKitchenOpen(false);
+    } finally {
+      setIsLoadingKitchen(false);
+    }
+  };
 
   const filteredItems = useMemo(() => {
     let filtered = allMenuItems;
@@ -588,6 +401,15 @@ const MenuScreen = ({ navigation }) => {
       return;
     }
 
+    // ✅ KITCHEN STATUS CHECK - CLIENT SIDE
+    if (!isKitchenOpen) {
+      Alert.alert(
+        "Kitchen Closed", 
+        "Sorry, the kitchen is currently closed and cannot accept new orders. Please try again later."
+      );
+      return;
+    }
+
     if (!customerName) {
       setShowNameInput(true);
       return;
@@ -602,6 +424,8 @@ const MenuScreen = ({ navigation }) => {
         customerName: customerName.trim()
       };
 
+      console.log('🛒 Processing order:', order);
+
       // Save to local history
       const historyResult = await OrderService.saveOrderToHistory(order);
       
@@ -609,9 +433,20 @@ const MenuScreen = ({ navigation }) => {
         throw new Error('Failed to save order history');
       }
 
-      // Send to Supabase
+      // Send to Supabase (includes SERVER-SIDE kitchen check)
       const supabaseResult = await OrderService.sendOrderToSupabase(order);
       
+      if (supabaseResult.error) {
+        if (supabaseResult.error.message.includes('KITCHEN_CLOSED')) {
+          Alert.alert(
+            "Kitchen Just Closed", 
+            "The kitchen just closed. Your order was saved locally but cannot be sent to the kitchen."
+          );
+        } else {
+          throw new Error(supabaseResult.error.message);
+        }
+      }
+
       // Clear cart and reset
       clearCart();
       setCustomerName('');
@@ -636,6 +471,7 @@ const MenuScreen = ({ navigation }) => {
         );
       }
     } catch (error) {
+      console.error('❌ Checkout error:', error);
       Alert.alert(
         "Order Error",
         "There was a problem processing your order. Please try again."
@@ -672,6 +508,20 @@ const MenuScreen = ({ navigation }) => {
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <GitGrubLogo size={120} style={styles.smallLogo} />
           <Text style={styles.title}>GitGrub Menu</Text>
+
+          {/* Kitchen Status Indicator */}
+          <View style={[
+            styles.kitchenStatus, 
+            { backgroundColor: isKitchenOpen ? Colors.success : Colors.error }
+          ]}>
+            {isLoadingKitchen ? (
+              <ActivityIndicator size="small" color={Colors.white} />
+            ) : (
+              <Text style={styles.kitchenStatusText}>
+                Kitchen: {isKitchenOpen ? 'OPEN' : 'CLOSED'}
+              </Text>
+            )}
+          </View>
 
           {/* Search Bar */}
           <TextInput
@@ -777,12 +627,16 @@ const MenuScreen = ({ navigation }) => {
               <Text style={styles.cartTotal}>Total: ${total}</Text>
 
               <TouchableOpacity
-                style={[styles.button, isCheckingOut && { opacity: 0.6 }]}
+                style={[
+                  styles.button, 
+                  (isCheckingOut || !isKitchenOpen) && { opacity: 0.6 }
+                ]}
                 onPress={handleCheckout}
-                disabled={isCheckingOut}
+                disabled={isCheckingOut || !isKitchenOpen}
               >
                 <Text style={styles.buttonText}>
-                  {isCheckingOut ? "Processing..." : "Checkout"}
+                  {!isKitchenOpen ? "Kitchen Closed" : 
+                   isCheckingOut ? "Processing..." : "Checkout"}
                 </Text>
               </TouchableOpacity>
 
@@ -799,211 +653,6 @@ const MenuScreen = ({ navigation }) => {
         </View>
       </SafeAreaView>
     </View>
-  );
-};
-
-const OrderHistoryScreen = () => {
-  const [orderHistory, setOrderHistory] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    loadOrderHistory();
-  }, []);
-
-  const loadOrderHistory = async () => {
-    try {
-      const history = await OrderService.getOrderHistory();
-      setOrderHistory(history);
-    } catch (error) {
-      Alert.alert("Error", "Failed to load order history");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  if (isLoading) {
-    return <LoadingSpinner message="Loading order history..." />;
-  }
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={120} style={styles.smallLogo} />
-          <Text style={styles.title}>Your Order History</Text>
-
-          {orderHistory.length > 0 ? (
-            orderHistory.map((order) => (
-              <View key={order.id} style={styles.orderCard}>
-                <Text style={styles.orderDate}>{order.date}</Text>
-                <Text style={styles.orderCustomer}>Name: {order.customerName}</Text>
-                <Text style={styles.orderStatus}>Status: {order.status}</Text>
-
-                {order.items.map((item, index) => (
-                  <Text key={index} style={styles.orderItem}>
-                    {item.quantity}x {item.name} - ${item.price.toFixed(2)}
-                  </Text>
-                ))}
-
-                <Text style={styles.orderTotal}>Total: ${order.total}</Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.emptyHistoryText}>No order history found</Text>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
-const ProfileScreen = ({ navigation }) => {
-  const { user, logout } = useAuth();
-
-  const handleLogout = async () => {
-    await logout();
-    navigation.navigate('Login');
-  };
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={120} style={styles.smallLogo} />
-          <Text style={styles.title}>Your Profile</Text>
-
-          <View style={styles.profileInfo}>
-            <Text style={styles.profileText}>Username: {user?.username}</Text>
-            <Text style={styles.profileText}>Email: {user?.email}</Text>
-            <Text style={styles.profileText}>Member since: 2025</Text>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, styles.secondaryButton]}
-            onPress={() => navigation.navigate('OrderHistory')}
-          >
-            <Text style={styles.buttonText}>View Order History</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: Colors.error }]}
-            onPress={handleLogout}
-          >
-            <Text style={styles.buttonText}>Logout</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
-const OrderStatusScreen = () => {
-  const [orders, setOrders] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    loadOrders();
-  }, []);
-
-  const loadOrders = async () => {
-    try {
-      const history = await OrderService.getOrderHistory();
-      setOrders(history.slice(0, 5)); // Show last 5 orders
-    } catch (error) {
-      console.error('Error loading orders:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const getStatusColor = (status) => {
-    const statusColors = {
-      pending: Colors.warning,
-      preparing: Colors.secondary,
-      ready: Colors.primary,
-      completed: Colors.success,
-    };
-    return statusColors[status] || Colors.primary;
-  };
-
-  if (isLoading) {
-    return <LoadingSpinner message="Loading orders..." />;
-  }
-
-  return (
-    <View style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={120} style={styles.smallLogo} />
-          <Text style={styles.title}>Order Status</Text>
-
-          {orders.length > 0 ? (
-            orders.map((order) => (
-              <View key={order.id} style={[
-                styles.orderCard,
-                { borderLeftColor: getStatusColor(order.status) }
-              ]}>
-                <View style={styles.row}>
-                  <Text style={styles.orderDate}>{order.date}</Text>
-                  <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
-                    {order.status.toUpperCase()}
-                  </Text>
-                </View>
-                <Text style={styles.orderCustomer}>{order.customerName}</Text>
-                
-                {order.items.map((item, index) => (
-                  <Text key={index} style={styles.orderItem}>
-                    {item.quantity}x {item.name}
-                  </Text>
-                ))}
-
-                <Text style={styles.orderTotal}>Total: ${order.total}</Text>
-              </View>
-            ))
-          ) : (
-            <Text style={styles.emptyHistoryText}>No recent orders found</Text>
-          )}
-        </ScrollView>
-      </SafeAreaView>
-    </View>
-  );
-};
-
-// ----------------------------
-// NAVIGATION & MAIN APP
-// ----------------------------
-const Stack = createStackNavigator();
-
-const App = () => {
-  const { user, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <LoadingSpinner />;
-  }
-
-  return (
-    <NavigationContainer>
-      <Stack.Navigator
-        initialRouteName={user ? "Home" : "Login"}
-        screenOptions={{
-          headerStyle: {
-            backgroundColor: '#1a1a2e',
-          },
-          headerTintColor: '#fff',
-          headerTitleStyle: {
-            fontWeight: 'bold',
-          },
-        }}
-      >
-        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'GitGrub' }} />
-        <Stack.Screen name="Menu" component={MenuScreen} options={{ title: 'Menu' }} />
-        <Stack.Screen name="OrderHistory" component={OrderHistoryScreen} options={{ title: 'Order History' }} />
-        <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Profile' }} />
-        <Stack.Screen name="OrderStatus" component={OrderStatusScreen} options={{ title: 'Order Status' }} />
-      </Stack.Navigator>
-    </NavigationContainer>
   );
 };
 
@@ -1043,9 +692,6 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontStyle: 'italic',
   },
-  logo: {
-    marginTop: 20,
-  },
   smallLogo: {
     marginBottom: 10,
   },
@@ -1060,17 +706,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.primary,
-  },
-  introText: {
-    fontSize: 18,
-    color: Colors.white,
-    marginBottom: 30,
-    textAlign: 'center',
-    backgroundColor: Colors.cardBackground,
-    padding: 15,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.secondary,
   },
   button: {
     backgroundColor: Colors.primary,
@@ -1230,67 +865,18 @@ const styles = StyleSheet.create({
     marginVertical: 10,
     fontStyle: 'italic',
   },
-  orderCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 10,
-    padding: 15,
+  kitchenStatus: {
+    padding: 12,
+    borderRadius: 8,
     marginBottom: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
-    shadowColor: Colors.black,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.white,
   },
-  orderDate: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 5,
-    color: Colors.black,
-  },
-  orderCustomer: {
-    fontSize: 16,
-    marginBottom: 10,
-    color: Colors.black,
-    fontWeight: '600',
-  },
-  orderStatus: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  orderItem: {
-    fontSize: 14,
-    marginLeft: 10,
-    marginBottom: 5,
-    color: Colors.black,
-  },
-  orderTotal: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 10,
-    color: Colors.primary,
-  },
-  emptyHistoryText: {
-    fontSize: 18,
+  kitchenStatusText: {
     color: Colors.white,
-    textAlign: 'center',
-    marginTop: 50,
-    fontStyle: 'italic',
-  },
-  profileInfo: {
-    backgroundColor: Colors.cardBackground,
-    padding: 20,
-    borderRadius: 10,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  profileText: {
+    fontWeight: 'bold',
     fontSize: 16,
-    color: Colors.white,
-    marginBottom: 10,
   },
   categoryScroll: {
     marginBottom: 15,
@@ -1337,4 +923,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default App;
+export default MenuScreen;
