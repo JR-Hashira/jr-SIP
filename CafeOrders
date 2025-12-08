@@ -1,4 +1,4 @@
-// App.js - Complete Fixed Ordering Side
+// App.js - Complete Updated Ordering Side with All Features
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Platform,
@@ -10,16 +10,30 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
-  ActivityIndicator
+  ActivityIndicator,
+  Modal,
+  StatusBar,
+  Image,
+  RefreshControl
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 // ----------------------------
-// CONSTANTS & CONFIGURATION
+// SUPABASE CONFIGURATION
 // ----------------------------
+const SUPABASE_URL = "https://tbfhhplpwqelstuzmlmh.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ----------------------------
+// CONSTANTS
+// ----------------------------
+const KITCHEN_ID = 'fe7566a9-948e-49a5-99a0-fce471acb649';
 const Colors = {
   primary: '#975dfe',
   secondary: '#1f4068',
@@ -31,59 +45,80 @@ const Colors = {
   error: '#FF5252',
   cardBackground: 'rgba(255, 255, 255, 0.1)',
   textSecondary: 'rgba(255, 255, 255, 0.7)',
+  darkBlue: '#0d1938',
+  lightPurple: '#b794f6',
+  yellow: '#FFD700',
 };
 
+// ----------------------------
+// MENU ITEMS (Simplified - No descriptions)
+// ----------------------------
 const MenuItems = {
   pizza: [
     { id: 1, name: "Cheese Pizza", price: 6.00, category: 'pizza' },
     { id: 2, name: "Pepperoni Pizza", price: 7.00, category: 'pizza' },
-    { id: 3, name: "Pepperoni and Sausage Pizza", price: 8.00, category: 'pizza' },
+    { id: 3, name: "Pepperoni & Sausage Pizza", price: 8.00, category: 'pizza' }
   ],
   sandwiches: [
-    { id: 4, name: "Chicken Sandwich", price: 5.00, category: 'sandwiches' },
-    { id: 5, name: "Grilled Cheese Sandwich", price: 5.00, category: 'sandwiches' },
+    { id: 5, name: "Chicken Sandwich", price: 5.00, category: 'sandwiches' },
+    { id: 6, name: "Grilled Cheese", price: 5.00, category: 'sandwiches' }
   ],
   wings: [
-    { id: 6, name: "6 Piece Wings", price: 8.00, category: 'wings' },
-    { id: 7, name: "12 Piece Wings", price: 15.00, category: 'wings' },
+    { id: 8, name: "6 Piece Wings", price: 8.00, category: 'wings', isWings: true },
+    { id: 9, name: "12 Piece Wings", price: 15.00, category: 'wings', isWings: true }
   ],
-  drinks: [
-    { id: 8, name: "Soda", price: 2.50, category: 'drinks' },
-    { id: 9, name: "Bottled Water", price: 1.50, category: 'drinks' },
+  pretzels: [
+    { id: 11, name: "Soft Pretzel", price: 3.00, category: 'pretzels' }
   ]
 };
 
 const allMenuItems = Object.values(MenuItems).flat();
 
-const Config = {
-  SUPABASE_URL: 'https://tbfhhplpwqelstuzmlmh.supabase.co',
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiZmhocGxwd3FlbHN0dXptbG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0ODY0NzYsImV4cCI6MjA3OTA2MjQ3Nn0.7v1snYLBqDEvNfGS9D74j_CqAUteZSI7oZxKrPFifPw'
-};
+// Wing flavors
+const WING_FLAVORS = [
+  'Plain',
+  'BBQ',
+  'Hot',
+  'Mango Habanero',
+  'Garlic Parmesan',
+  'Sweet Chili'
+];
 
 // ----------------------------
-// SUPABASE CLIENT
-// ----------------------------
-const supabase = createClient(Config.SUPABASE_URL, Config.SUPABASE_ANON_KEY);
-
-// ----------------------------
-// SERVICES - FIXED
+// ORDER SERVICE - UPDATED
 // ----------------------------
 const OrderService = {
   async checkKitchenStatus() {
     try {
-      console.log('🔍 Checking kitchen status...');
+      console.log('🔍 Checking kitchen status from Kitchens table...');
+      // ✅ FIXED: Changed from 'kitchens' to 'Kitchens'
       const { data, error } = await supabase
-        .from('kitchens')
-        .select('*')
-        .eq('id', 'fe7566a9-948e-49a5-99a0-fce471acb649')
+        .from('Kitchens')  // ✅ FIXED
+        .select('is_open')
+        .eq('id', KITCHEN_ID)
         .single();
 
       if (error) {
-        console.error('❌ Kitchen status error:', error);
-        return { isOpen: false, error };
+        console.log('❌ Kitchen not found, creating default...', error);
+        // ✅ FIXED: Changed from 'kitchens' to 'Kitchens'
+        const { error: createError } = await supabase
+          .from('Kitchens')  // ✅ FIXED
+          .insert([{
+            id: KITCHEN_ID,
+            name: 'Main Kitchen',
+            is_open: true,
+            created_at: new Date().toISOString()
+          }]);
+
+        if (createError) {
+          console.error('❌ Error creating kitchen:', createError);
+          return { isOpen: false, error: createError };
+        }
+        console.log('✅ Kitchen created successfully');
+        return { isOpen: true, error: null };
       }
 
-      console.log('✅ Kitchen found:', data);
+      console.log('✅ Kitchen status loaded:', data?.is_open);
       return { isOpen: data?.is_open || false, error: null };
     } catch (error) {
       console.error('❌ Kitchen check error:', error);
@@ -93,41 +128,87 @@ const OrderService = {
 
   async sendOrderToSupabase(order) {
     try {
-      console.log('🔄 Sending order to Supabase...', order);
-
-      // First, verify kitchen is open
+      // Check kitchen status first
       const kitchenCheck = await this.checkKitchenStatus();
-      
       if (!kitchenCheck.isOpen) {
-        console.log('❌ Kitchen is closed - blocking order');
-        return { 
-          success: false, 
-          error: { message: 'KITCHEN_CLOSED: Kitchen is currently closed' } 
+        return {
+          success: false,
+          error: { message: 'KITCHEN_CLOSED' }
         };
       }
 
-      console.log('✅ Kitchen is open - proceeding with order');
+      // Format order items for JSON storage
+      const orderItems = order.items.map(item => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity || 1,
+        category: item.category,
+        wingFlavor: item.wingFlavor || null
+      }));
 
-      const { data, error } = await supabase.from('orders').insert([
-        {
-          customer_name: order.customerName,
-          order_items: JSON.stringify(order.items),
-          total_price: parseFloat(order.total),
-          status: 'pending',
-          kitchen_id: 'fe7566a9-948e-49a5-99a0-fce471acb649',
-          created_at: new Date().toISOString(),
-        }
-      ]).select();
+      const orderData = {
+        customer_name: order.customerName,
+        order_items: orderItems,
+        total_price: parseFloat(order.total),
+        status: 'pending',
+        kitchen_id: KITCHEN_ID,
+        created_at: new Date().toISOString(),
+      };
+
+      console.log('📤 Sending order to Supabase:', orderData);
+      const { data, error } = await supabase
+        .from('orders')
+        .insert([orderData])
+        .select();
 
       if (error) {
-        console.error('❌ Order creation error:', error);
+        console.error('❌ Order submission error:', error);
         return { success: false, error };
       }
 
-      console.log('✅ Order created successfully:', data);
+      console.log('✅ Order sent successfully:', data);
       return { success: true, data };
     } catch (error) {
-      console.error('❌ Order Service Error:', error);
+      console.error('❌ Order service error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async submitFeedback(feedback) {
+    try {
+      const { error } = await supabase
+        .from('feedback')
+        .insert([{
+          order_id: feedback.orderId,
+          customer_name: feedback.customerName,
+          rating: feedback.rating,
+          comment: feedback.comment,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) throw error;
+      return { success: true };
+    } catch (error) {
+      console.error('Feedback error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async submitSuggestion(suggestion) {
+    try {
+      const { error } = await supabase
+        .from('suggestions')
+        .insert([{
+          customer_name: suggestion.customerName,
+          suggestion: suggestion.text,
+          created_at: new Date().toISOString()
+        }]);
+
+      if (error) throw error;
+      return { success: true };
+    } catch (error) {
+      console.error('Suggestion error:', error);
       return { success: false, error };
     }
   },
@@ -138,18 +219,18 @@ const OrderService = {
         ...order,
         id: Date.now(),
         date: new Date().toLocaleString(),
-        status: 'completed'
+        status: 'pending'
       };
 
       const existingHistory = await AsyncStorage.getItem('orderHistory');
       const history = existingHistory ? JSON.parse(existingHistory) : [];
-      
+     
       const updatedHistory = [orderWithMeta, ...history].slice(0, 50);
-      
       await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
+     
       return { success: true };
     } catch (error) {
-      console.error('Save History Error:', error);
+      console.error('Save history error:', error);
       return { success: false, error };
     }
   },
@@ -159,7 +240,38 @@ const OrderService = {
       const history = await AsyncStorage.getItem('orderHistory');
       return history ? JSON.parse(history) : [];
     } catch (error) {
-      console.error('Get History Error:', error);
+      console.error('Get history error:', error);
+      return [];
+    }
+  },
+
+  async updateOrderStatus(orderId, newStatus) {
+    try {
+      const history = await this.getOrderHistory();
+      const updatedHistory = history.map(order =>
+        order.id === orderId ? { ...order, status: newStatus } : order
+      );
+     
+      await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
+      return { success: true };
+    } catch (error) {
+      console.error('Update status error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async getRecentFeedback() {
+    try {
+      const { data, error } = await supabase
+        .from('feedback')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Get feedback error:', error);
       return [];
     }
   }
@@ -215,12 +327,28 @@ const useAuth = () => {
 const useCart = () => {
   const [cart, setCart] = useState([]);
 
-  const addToCart = useCallback((item) => {
-    setCart(prev => [...prev, { 
-      ...item, 
-      cartId: Date.now() + Math.random(),
-      quantity: 1
-    }]);
+  const addToCart = useCallback((item, wingFlavor = null) => {
+    setCart(prev => {
+      const existingItem = prev.find(cartItem =>
+        cartItem.id === item.id && cartItem.wingFlavor === wingFlavor
+      );
+     
+      if (existingItem) {
+        return prev.map(cartItem =>
+          cartItem.cartId === existingItem.cartId
+            ? { ...cartItem, quantity: cartItem.quantity + 1 }
+            : cartItem
+        );
+      }
+     
+      const cartId = Date.now() + Math.random();
+      return [...prev, {
+        ...item,
+        cartId,
+        quantity: 1,
+        wingFlavor: wingFlavor || null
+      }];
+    });
   }, []);
 
   const removeFromCart = useCallback((cartId) => {
@@ -232,7 +360,7 @@ const useCart = () => {
       removeFromCart(cartId);
       return;
     }
-    
+   
     setCart(prev => prev.map(item =>
       item.cartId === cartId ? { ...item, quantity: newQuantity } : item
     ));
@@ -242,13 +370,13 @@ const useCart = () => {
     setCart([]);
   }, []);
 
-  const total = useMemo(() => 
-    cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2), 
+  const total = useMemo(() =>
+    cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2),
     [cart]
   );
 
-  const itemCount = useMemo(() => 
-    cart.reduce((count, item) => count + item.quantity, 0), 
+  const itemCount = useMemo(() =>
+    cart.reduce((count, item) => count + item.quantity, 0),
     [cart]
   );
 
@@ -280,42 +408,146 @@ const LoadingSpinner = ({ message = "Loading..." }) => (
   </View>
 );
 
-const MenuItem = ({ item, onAddToCart }) => (
-  <TouchableOpacity 
-    style={styles.menuItemButton} 
-    onPress={() => onAddToCart(item)}
-  >
-    <Text style={styles.menuItem}>
-      {item.name} - ${item.price.toFixed(2)}
-    </Text>
-  </TouchableOpacity>
-);
+const WingFlavorModal = ({ visible, item, onClose, onAdd }) => {
+  const [selectedFlavor, setSelectedFlavor] = useState(WING_FLAVORS[0]);
+
+  const handleAdd = () => {
+    onAdd(item, selectedFlavor);
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Select Wing Flavor</Text>
+          <Text style={styles.modalSubtitle}>
+            Choose a flavor for your {item.name}:
+          </Text>
+         
+          {WING_FLAVORS.map((flavor) => (
+            <TouchableOpacity
+              key={flavor}
+              style={[
+                styles.flavorOption,
+                selectedFlavor === flavor && styles.flavorOptionSelected
+              ]}
+              onPress={() => setSelectedFlavor(flavor)}
+            >
+              <Text style={[
+                styles.flavorText,
+                selectedFlavor === flavor && styles.flavorTextSelected
+              ]}>
+                {flavor}
+              </Text>
+              {selectedFlavor === flavor && (
+                <Icon name="check" size={20} color={Colors.primary} />
+              )}
+            </TouchableOpacity>
+          ))}
+         
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={styles.submitButton}
+              onPress={handleAdd}
+            >
+              <Text style={styles.buttonText}>Add to Cart</Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={onClose}
+            >
+              <Text style={styles.buttonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+const MenuItem = ({ item, onAddToCart }) => {
+  const [showWingModal, setShowWingModal] = useState(false);
+
+  const handlePress = () => {
+    if (item.isWings) {
+      setShowWingModal(true);
+    } else {
+      onAddToCart(item);
+    }
+  };
+
+  return (
+    <>
+      <TouchableOpacity
+        style={styles.menuItemButton}
+        onPress={handlePress}
+        activeOpacity={0.7}
+      >
+        <View style={styles.menuItemContent}>
+          <View style={styles.menuItemTextContainer}>
+            <Text style={styles.menuItemName}>{item.name}</Text>
+            {item.isWings && (
+              <Text style={styles.wingIndicator}>
+                <Icon name="info" size={14} color={Colors.primary} /> Choose flavor when added
+              </Text>
+            )}
+          </View>
+          <View style={styles.menuItemPriceContainer}>
+            <Text style={styles.menuItemPrice}>${item.price.toFixed(2)}</Text>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={handlePress}
+            >
+              <Text style={styles.addButtonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+     
+      {item.isWings && (
+        <WingFlavorModal
+          visible={showWingModal}
+          item={item}
+          onClose={() => setShowWingModal(false)}
+          onAdd={onAddToCart}
+        />
+      )}
+    </>
+  );
+};
 
 const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
   <View style={styles.cartItem}>
     <View style={styles.cartItemInfo}>
-      <Text style={styles.cartItemText}>{item.name}</Text>
+      <Text style={styles.cartItemName} numberOfLines={1}>
+        {item.name}
+      </Text>
+      {item.wingFlavor && (
+        <Text style={styles.wingFlavorText}>Flavor: {item.wingFlavor}</Text>
+      )}
       <Text style={styles.cartItemPrice}>${item.price.toFixed(2)}</Text>
     </View>
-    
+   
     <View style={styles.quantityContainer}>
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.quantityButton}
         onPress={() => onUpdateQuantity(item.cartId, item.quantity - 1)}
       >
         <Text style={styles.quantityButtonText}>-</Text>
       </TouchableOpacity>
-      
+     
       <Text style={styles.quantityText}>{item.quantity}</Text>
-      
-      <TouchableOpacity 
+     
+      <TouchableOpacity
         style={styles.quantityButton}
         onPress={() => onUpdateQuantity(item.cartId, item.quantity + 1)}
       >
         <Text style={styles.quantityButtonText}>+</Text>
       </TouchableOpacity>
-      
-      <TouchableOpacity 
+     
+      <TouchableOpacity
         style={styles.removeButton}
         onPress={() => onRemove(item.cartId)}
       >
@@ -325,9 +557,532 @@ const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
   </View>
 );
 
+const ProfileIcon = ({ onPress }) => (
+  <TouchableOpacity onPress={onPress} style={styles.profileIcon}>
+    <Icon name="person" size={28} color={Colors.white} />
+  </TouchableOpacity>
+);
+
+const FeedbackModal = ({ visible, onClose, orderDetails }) => {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submitFeedback = async () => {
+    if (!comment.trim()) {
+      Alert.alert('Please Add a Comment', 'We value your detailed feedback!');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await OrderService.submitFeedback({
+        orderId: orderDetails?.id,
+        customerName: orderDetails?.customerName || 'Anonymous',
+        rating,
+        comment: comment.trim()
+      });
+
+      if (result.success) {
+        Alert.alert('Thank You! 🎉', 'Your feedback helps us improve!');
+        onClose();
+      } else {
+        throw new Error('Submission failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to submit feedback. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Rate Your Order</Text>
+         
+          <View style={styles.ratingContainer}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <TouchableOpacity key={star} onPress={() => setRating(star)}>
+                <Icon
+                  name={star <= rating ? "star" : "star-outline"}
+                  size={48}
+                  color={star <= rating ? Colors.yellow : "#ddd"}
+                />
+              </TouchableOpacity>
+            ))}
+          </View>
+         
+          <Text style={styles.ratingText}>{rating}/5 Stars</Text>
+         
+          <TextInput
+            style={styles.commentInput}
+            placeholder="How was your food? Any suggestions?"
+            placeholderTextColor="#999"
+            value={comment}
+            onChangeText={setComment}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+         
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                (!comment.trim() || isSubmitting) && styles.disabledButton
+              ]}
+              onPress={submitFeedback}
+              disabled={!comment.trim() || isSubmitting}
+            >
+              <Text style={styles.buttonText}>
+                {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
+              </Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={onClose}
+            >
+              <Text style={styles.buttonText}>Maybe Later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+const SuggestionModal = ({ visible, onClose }) => {
+  const [suggestion, setSuggestion] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const submitSuggestion = async () => {
+    if (!suggestion.trim()) {
+      Alert.alert('Error', 'Please enter your suggestion');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await OrderService.submitSuggestion({
+        customerName: 'Anonymous',
+        text: suggestion.trim()
+      });
+
+      if (result.success) {
+        Alert.alert('Thank You! 💡', 'Your suggestion has been recorded!');
+        setSuggestion('');
+        onClose();
+      } else {
+        throw new Error('Submission failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to submit suggestion. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Menu Suggestion</Text>
+          <Text style={styles.modalSubtitle}>
+            What would you like to see on our menu?
+          </Text>
+         
+          <TextInput
+            style={styles.suggestionInput}
+            placeholder="E.g., More vegetarian options, breakfast items, etc."
+            placeholderTextColor="#999"
+            value={suggestion}
+            onChangeText={setSuggestion}
+            multiline
+            numberOfLines={4}
+            textAlignVertical="top"
+          />
+         
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[
+                styles.submitButton,
+                (!suggestion.trim() || isSubmitting) && styles.disabledButton
+              ]}
+              onPress={submitSuggestion}
+              disabled={!suggestion.trim() || isSubmitting}
+            >
+              <Text style={styles.buttonText}>
+                {isSubmitting ? 'Submitting...' : 'Submit Suggestion'}
+              </Text>
+            </TouchableOpacity>
+           
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={onClose}
+            >
+              <Text style={styles.buttonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 // ----------------------------
-// ORDERING SIDE - FIXED MENU SCREEN
+// SCREENS
 // ----------------------------
+const LoginScreen = ({ navigation }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
+
+  const handleLogin = async () => {
+    if (!username.trim() || !password.trim()) {
+      Alert.alert("Error", "Please enter both username and password");
+      return;
+    }
+
+    setIsLoading(true);
+   
+    try {
+      const success = await login({
+        username: username.trim(),
+        email: `${username.trim()}@gitgrub.com`,
+        name: username.trim()
+      });
+     
+      if (success) {
+        navigation.navigate('Home');
+      } else {
+        Alert.alert("Error", "Failed to login. Please try again.");
+      }
+    } catch (error) {
+      Alert.alert("Error", "An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGuestLogin = () => {
+    login({ username: 'Guest', email: 'guest@gitgrub.com', name: 'Guest' });
+    navigation.navigate('Home');
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={180} style={styles.logo} />
+
+          <Text style={styles.title}>Welcome to GitGrub</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            placeholderTextColor={Colors.textSecondary}
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor={Colors.textSecondary}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!isLoading}
+          />
+
+          <TouchableOpacity
+            style={[styles.button, isLoading && { opacity: 0.6 }]}
+            onPress={handleLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>
+              {isLoading ? "Logging in..." : "Login"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={handleGuestLogin}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>Continue as Guest</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Register')}
+          >
+            <Text style={styles.linkText}>
+              Don't have an account? Register
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const RegisterScreen = ({ navigation }) => {
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
+
+  const handleRegister = async () => {
+    if (!form.username.trim() || !form.email.trim() || !form.password.trim()) {
+      Alert.alert("Error", "Please fill in all fields");
+      return;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      Alert.alert("Error", "Passwords do not match");
+      return;
+    }
+
+    if (form.password.length < 6) {
+      Alert.alert("Error", "Password must be at least 6 characters");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const success = await login({
+        username: form.username.trim(),
+        email: form.email.trim(),
+        name: form.username.trim()
+      });
+     
+      if (success) {
+        Alert.alert("Success", "Account created successfully!");
+        navigation.navigate('Home');
+      } else {
+        Alert.alert("Error", "Failed to create account. Please try again.");
+      }
+    } catch (error) {
+      Alert.alert("Error", "An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={160} style={styles.logo} />
+
+          <Text style={styles.title}>Create Account</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            placeholderTextColor={Colors.textSecondary}
+            value={form.username}
+            onChangeText={(text) => setForm(prev => ({ ...prev, username: text }))}
+            autoCapitalize="none"
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            placeholderTextColor={Colors.textSecondary}
+            value={form.email}
+            onChangeText={(text) => setForm(prev => ({ ...prev, email: text }))}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor={Colors.textSecondary}
+            value={form.password}
+            onChangeText={(text) => setForm(prev => ({ ...prev, password: text }))}
+            secureTextEntry
+            editable={!isLoading}
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm Password"
+            placeholderTextColor={Colors.textSecondary}
+            value={form.confirmPassword}
+            onChangeText={(text) => setForm(prev => ({ ...prev, confirmPassword: text }))}
+            secureTextEntry
+            editable={!isLoading}
+          />
+
+          <TouchableOpacity
+            style={[styles.button, isLoading && { opacity: 0.6 }]}
+            onPress={handleRegister}
+            disabled={isLoading}
+          >
+            <Text style={styles.buttonText}>
+              {isLoading ? "Creating Account..." : "Register"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Login')}
+          >
+            <Text style={styles.linkText}>
+              Already have an account? Login
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const HomeScreen = ({ navigation }) => {
+  const { user, logout } = useAuth();
+  const [kitchenStatus, setKitchenStatus] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    checkKitchenStatus();
+  }, []);
+
+  const checkKitchenStatus = async () => {
+    setIsLoading(true);
+    const result = await OrderService.checkKitchenStatus();
+    setKitchenStatus(result.isOpen);
+    setIsLoading(false);
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: async () => {
+            await logout();
+            navigation.navigate('Login');
+          }
+        }
+      ]
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GitGrubLogo size={160} style={styles.logo} />
+
+          <Text style={styles.title}>Welcome{user?.name ? `, ${user.name}` : ''}!</Text>
+
+          <Text style={styles.introText}>
+            Late night food for hungry developers
+          </Text>
+
+          {/* Kitchen Status */}
+          <View style={[
+            styles.kitchenStatusCard,
+            { backgroundColor: kitchenStatus ? Colors.success : Colors.error }
+          ]}>
+            {isLoading ? (
+              <ActivityIndicator size="small" color={Colors.white} />
+            ) : (
+              <>
+                <Text style={styles.kitchenStatusText}>
+                  {kitchenStatus ? '🟢 KITCHEN OPEN' : '🔴 KITCHEN CLOSED'}
+                </Text>
+                <Text style={styles.kitchenStatusSubtext}>
+                  {kitchenStatus ? 'Orders are being accepted' : 'No new orders accepted'}
+                </Text>
+              </>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={() => navigation.navigate('Menu')}
+          >
+            <Icon name="restaurant-menu" size={24} color={Colors.white} />
+            <Text style={styles.menuButtonText}>View Full Menu</Text>
+          </TouchableOpacity>
+
+          <View style={styles.quickActions}>
+            <TouchableOpacity
+              style={styles.quickActionButton}
+              onPress={() => navigation.navigate('OrderStatus')}
+            >
+              <Icon name="assignment" size={24} color={Colors.white} />
+              <Text style={styles.quickActionText}>Order Status</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickActionButton}
+              onPress={() => navigation.navigate('OrderHistory')}
+            >
+              <Icon name="history" size={24} color={Colors.white} />
+              <Text style={styles.quickActionText}>Order History</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickActionButton}
+              onPress={() => navigation.navigate('Feedback')}
+            >
+              <Icon name="star" size={24} color={Colors.white} />
+              <Text style={styles.quickActionText}>Feedback</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickActionButton}
+              onPress={() => navigation.navigate('Suggestions')}
+            >
+              <Icon name="lightbulb" size={24} color={Colors.white} />
+              <Text style={styles.quickActionText}>Suggestions</Text>
+            </TouchableOpacity>
+          </View>
+
+          {user && user.username !== 'Guest' && (
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() => navigation.navigate('Profile')}
+            >
+              <Text style={styles.buttonText}>View Profile</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: Colors.error }]}
+            onPress={handleLogout}
+          >
+            <Text style={styles.buttonText}>Logout</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
 const MenuScreen = ({ navigation }) => {
   const {
     cart,
@@ -338,80 +1093,105 @@ const MenuScreen = ({ navigation }) => {
     total,
     itemCount
   } = useCart();
-  
+ 
   const [customerName, setCustomerName] = useState('');
-  const [showNameInput, setShowNameInput] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
-  const [isKitchenOpen, setIsKitchenOpen] = useState(false);
-  const [isLoadingKitchen, setIsLoadingKitchen] = useState(true);
+  const [kitchenStatus, setKitchenStatus] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [recentOrder, setRecentOrder] = useState(null);
 
   const categories = [
-    { key: 'all', label: 'All' },
-    { key: 'pizza', label: 'Pizza' },
-    { key: 'sandwiches', label: 'Sandwiches' },
-    { key: 'wings', label: 'Wings' },
-    { key: 'drinks', label: 'Drinks' },
+    { key: 'all', label: 'All Items', icon: 'apps' },
+    { key: 'pizza', label: 'Pizza', icon: 'local-pizza' },
+    { key: 'sandwiches', label: 'Sandwiches', icon: 'fastfood' },
+    { key: 'wings', label: 'Wings', icon: 'restaurant' },
+    { key: 'pretzels', label: 'Pretzels', icon: 'bakery-dining' },
   ];
 
-  // Check kitchen status on component mount
   useEffect(() => {
     checkKitchenStatus();
+   
+    // Set up real-time subscription for order status changes
+    const channel = supabase
+      .channel('order-status-updates')
+      .on('postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'orders'
+        },
+        (payload) => {
+          if (payload.new.status === 'completed') {
+            const orderItems = payload.new.order_items || [];
+            const itemNames = orderItems.map(item =>
+              `${item.quantity}x ${item.name}`
+            ).join(', ');
+           
+            Alert.alert(
+              "🎉 Order Complete!",
+              `Your order of ${itemNames} is complete, please come pick up!`,
+              [{ text: "OK" }]
+            );
+          } else if (payload.new.status === 'declined') {
+            Alert.alert(
+              "😔 Order Declined",
+              "We're sorry, your order was declined by the kitchen.",
+              [{ text: "OK" }]
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
   }, []);
 
   const checkKitchenStatus = async () => {
-    try {
-      setIsLoadingKitchen(true);
-      const { isOpen, error } = await OrderService.checkKitchenStatus();
-      
-      if (error) {
-        console.error('Failed to check kitchen status:', error);
-        setIsKitchenOpen(false); // Default to closed for safety
-      } else {
-        setIsKitchenOpen(isOpen);
-      }
-    } catch (error) {
-      console.error('Kitchen status error:', error);
-      setIsKitchenOpen(false);
-    } finally {
-      setIsLoadingKitchen(false);
-    }
+    setIsLoading(true);
+    const result = await OrderService.checkKitchenStatus();
+    setKitchenStatus(result.isOpen);
+    setIsLoading(false);
   };
 
   const filteredItems = useMemo(() => {
     let filtered = allMenuItems;
-    
+   
     if (searchQuery) {
       filtered = filtered.filter(item =>
         item.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
-    
+   
     if (selectedCategory !== 'all') {
       filtered = filtered.filter(item => item.category === selectedCategory);
     }
-    
+   
     return filtered;
   }, [searchQuery, selectedCategory]);
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
-      Alert.alert("Empty Cart", "Your cart is empty. Please add items before checkout.");
+      Alert.alert("Empty Cart", "Please add items to your cart before checkout.");
       return;
     }
 
-    // ✅ KITCHEN STATUS CHECK - CLIENT SIDE
-    if (!isKitchenOpen) {
+    if (!kitchenStatus) {
       Alert.alert(
-        "Kitchen Closed", 
-        "Sorry, the kitchen is currently closed and cannot accept new orders. Please try again later."
+        "Kitchen Closed 🚫",
+        "Sorry, the kitchen is currently closed and cannot accept new orders. Please try again later.",
+        [{ text: 'OK' }]
       );
       return;
     }
 
-    if (!customerName) {
-      setShowNameInput(true);
+    if (!customerName.trim()) {
+      setShowNameModal(true);
       return;
     }
 
@@ -424,116 +1204,115 @@ const MenuScreen = ({ navigation }) => {
         customerName: customerName.trim()
       };
 
-      console.log('🛒 Processing order:', order);
-
       // Save to local history
       const historyResult = await OrderService.saveOrderToHistory(order);
-      
       if (!historyResult.success) {
         throw new Error('Failed to save order history');
       }
 
-      // Send to Supabase (includes SERVER-SIDE kitchen check)
+      // Send to Supabase
       const supabaseResult = await OrderService.sendOrderToSupabase(order);
-      
-      if (supabaseResult.error) {
-        if (supabaseResult.error.message.includes('KITCHEN_CLOSED')) {
-          Alert.alert(
-            "Kitchen Just Closed", 
-            "The kitchen just closed. Your order was saved locally but cannot be sent to the kitchen."
-          );
-        } else {
-          throw new Error(supabaseResult.error.message);
-        }
-      }
-
-      // Clear cart and reset
-      clearCart();
-      setCustomerName('');
-      setShowNameInput(false);
-
+     
       if (supabaseResult.success) {
+        // Set recent order for feedback
+        setRecentOrder({
+          id: supabaseResult.data?.[0]?.id || Date.now(),
+          customerName: customerName.trim(),
+          items: cart,
+          total: total
+        });
+
+        // Clear cart and reset
+        clearCart();
+        setCustomerName('');
+
         Alert.alert(
           "Order Confirmed! 🎉",
-          `Thank you, ${customerName}! Your order total is $${total}`,
+          `Thank you, ${customerName.trim()}! Your order has been sent to the kitchen.\n\nTotal: $${total}`,
           [
             {
-              text: "View Order Status",
+              text: "Track Order",
               onPress: () => navigation.navigate('OrderStatus')
             },
-            { text: "OK", style: "default" }
+            {
+              text: "Rate Order",
+              onPress: () => setShowFeedbackModal(true)
+            },
+            { text: "Continue Shopping", style: "cancel" }
           ]
         );
       } else {
-        Alert.alert(
-          "Order Submitted Locally",
-          "Your order was saved but couldn't be sent to the kitchen. Total: $" + total
-        );
+        if (supabaseResult.error?.message === 'KITCHEN_CLOSED') {
+          Alert.alert(
+            "Kitchen Just Closed",
+            "The kitchen closed while processing your order. Please try again later."
+          );
+        } else {
+          throw new Error('Failed to send order');
+        }
       }
     } catch (error) {
-      console.error('❌ Checkout error:', error);
+      console.error('Checkout error:', error);
       Alert.alert(
-        "Order Error",
-        "There was a problem processing your order. Please try again."
+        "Order Issue",
+        "There was a problem with your order. Please try again."
       );
     } finally {
       setIsCheckingOut(false);
     }
   };
 
-  const renderMenuSection = (category, items) => {
-    const categoryItems = filteredItems.filter(item => item.category === category);
-    if (categoryItems.length === 0 && selectedCategory === 'all') return null;
-
-    return (
-      <View key={category}>
-        <Text style={styles.menuSection}>
-          {category.charAt(0).toUpperCase() + category.slice(1)}:
-        </Text>
-        {categoryItems.map(item => (
-          <MenuItem
-            key={item.id}
-            item={item}
-            onAddToCart={addToCart}
-          />
-        ))}
-        <View style={styles.separator} />
-      </View>
-    );
-  };
-
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <GitGrubLogo size={120} style={styles.smallLogo} />
-          <Text style={styles.title}>GitGrub Menu</Text>
-
-          {/* Kitchen Status Indicator */}
-          <View style={[
-            styles.kitchenStatus, 
-            { backgroundColor: isKitchenOpen ? Colors.success : Colors.error }
-          ]}>
-            {isLoadingKitchen ? (
-              <ActivityIndicator size="small" color={Colors.white} />
-            ) : (
-              <Text style={styles.kitchenStatusText}>
-                Kitchen: {isKitchenOpen ? 'OPEN' : 'CLOSED'}
-              </Text>
-            )}
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>GitGrub Menu</Text>
+            <View style={styles.headerRight} />
           </View>
 
-          {/* Search Bar */}
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search menu items..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
+          {/* Kitchen Status */}
+          {!kitchenStatus && (
+            <View style={styles.kitchenClosedBanner}>
+              <Icon name="warning" size={20} color={Colors.white} />
+              <Text style={styles.kitchenClosedText}>
+                Kitchen Closed - Orders saved for when kitchen reopens
+              </Text>
+            </View>
+          )}
 
-          {/* Category Filter */}
-          <ScrollView 
-            horizontal 
+          {/* Search */}
+          <View style={styles.searchContainer}>
+            <Icon name="search" size={20} color={Colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search menu items..."
+              placeholderTextColor={Colors.textSecondary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery ? (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Icon name="close" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Categories */}
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.categoryScroll}
           >
@@ -546,53 +1325,36 @@ const MenuScreen = ({ navigation }) => {
                 ]}
                 onPress={() => setSelectedCategory(category.key)}
               >
-                <Text style={styles.categoryButtonText}>{category.label}</Text>
+                <Icon
+                  name={category.icon}
+                  size={20}
+                  color={selectedCategory === category.key ? Colors.white : Colors.textSecondary}
+                />
+                <Text style={[
+                  styles.categoryButtonText,
+                  selectedCategory === category.key && styles.categoryButtonTextActive
+                ]}>
+                  {category.label}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
-          {/* Name Input Modal */}
-          {showNameInput && (
-            <View style={styles.nameInputContainer}>
-              <Text style={{ color: 'white', marginBottom: 10, textAlign: 'center' }}>
-                Please enter your name for the order:
-              </Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your name"
-                value={customerName}
-                onChangeText={setCustomerName}
-                autoFocus
-              />
-              <View style={styles.row}>
-                <TouchableOpacity
-                  style={[styles.button, { flex: 1, marginRight: 5 }]}
-                  onPress={() => {
-                    if (customerName.trim()) {
-                      setShowNameInput(false);
-                      handleCheckout();
-                    }
-                  }}
-                  disabled={!customerName.trim()}
-                >
-                  <Text style={styles.buttonText}>Confirm</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.secondaryButton, { flex: 1, marginLeft: 5 }]}
-                  onPress={() => setShowNameInput(false)}
-                >
-                  <Text style={styles.buttonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
           {/* Menu Items */}
-          <View style={styles.menuItemContainer}>
-            {selectedCategory === 'all' ? (
-              Object.keys(MenuItems).map(category => 
-                renderMenuSection(category, MenuItems[category])
-              )
+          <View style={styles.menuSection}>
+            <Text style={styles.sectionTitle}>
+              {selectedCategory === 'all' ? 'All Menu Items' :
+               categories.find(c => c.key === selectedCategory)?.label}
+            </Text>
+           
+            {filteredItems.length === 0 ? (
+              <View style={styles.emptyMenuContainer}>
+                <Icon name="search-off" size={48} color={Colors.textSecondary} />
+                <Text style={styles.emptyMenuText}>No items found</Text>
+                <Text style={styles.emptyMenuSubtext}>
+                  Try a different search or category
+                </Text>
+              </View>
             ) : (
               filteredItems.map(item => (
                 <MenuItem
@@ -607,13 +1369,20 @@ const MenuScreen = ({ navigation }) => {
 
         {/* Cart Section */}
         <View style={styles.cartContainer}>
-          <Text style={styles.cartTitle}>
-            Your Cart ({itemCount} {itemCount === 1 ? 'item' : 'items'})
-          </Text>
+          <View style={styles.cartHeader}>
+            <Text style={styles.cartTitle}>
+              Your Order ({itemCount} {itemCount === 1 ? 'item' : 'items'})
+            </Text>
+            {cart.length > 0 && (
+              <TouchableOpacity onPress={clearCart}>
+                <Text style={styles.clearCartText}>Clear All</Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           {cart.length > 0 ? (
             <>
-              <ScrollView style={{ maxHeight: 200 }}>
+              <ScrollView style={styles.cartItemsScroll} showsVerticalScrollIndicator={false}>
                 {cart.map((item) => (
                   <CartItem
                     key={item.cartId}
@@ -624,35 +1393,966 @@ const MenuScreen = ({ navigation }) => {
                 ))}
               </ScrollView>
 
-              <Text style={styles.cartTotal}>Total: ${total}</Text>
+              <View style={styles.cartFooter}>
+                <View style={styles.totalContainer}>
+                  <Text style={styles.totalLabel}>Total:</Text>
+                  <Text style={styles.totalAmount}>${total}</Text>
+                </View>
 
-              <TouchableOpacity
-                style={[
-                  styles.button, 
-                  (isCheckingOut || !isKitchenOpen) && { opacity: 0.6 }
-                ]}
-                onPress={handleCheckout}
-                disabled={isCheckingOut || !isKitchenOpen}
-              >
-                <Text style={styles.buttonText}>
-                  {!isKitchenOpen ? "Kitchen Closed" : 
-                   isCheckingOut ? "Processing..." : "Checkout"}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.button, styles.secondaryButton]}
-                onPress={clearCart}
-              >
-                <Text style={styles.buttonText}>Clear Cart</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.checkoutButton,
+                    (!kitchenStatus || isCheckingOut) && styles.checkoutButtonDisabled
+                  ]}
+                  onPress={handleCheckout}
+                  disabled={!kitchenStatus || isCheckingOut}
+                >
+                  <Text style={styles.checkoutButtonText}>
+                    {isCheckingOut ? 'Processing...' :
+                     !kitchenStatus ? 'Kitchen Closed' :
+                     `Checkout - $${total}`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </>
           ) : (
-            <Text style={styles.emptyCartText}>Your cart is empty</Text>
+            <View style={styles.emptyCartContainer}>
+              <Icon name="shopping-cart" size={48} color={Colors.textSecondary} />
+              <Text style={styles.emptyCartText}>Your cart is empty</Text>
+              <Text style={styles.emptyCartSubtext}>
+                Add items from the menu above
+              </Text>
+            </View>
           )}
         </View>
       </SafeAreaView>
+
+      {/* Name Modal */}
+      <Modal
+        visible={showNameModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowNameModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Name for Order</Text>
+            <Text style={styles.modalSubtitle}>
+              Please enter your name for the order:
+            </Text>
+           
+            <TextInput
+              style={styles.nameInput}
+              placeholder="Your name"
+              placeholderTextColor="#999"
+              value={customerName}
+              onChangeText={setCustomerName}
+              autoFocus
+            />
+           
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  styles.submitButton,
+                  !customerName.trim() && styles.disabledButton
+                ]}
+                onPress={() => {
+                  if (customerName.trim()) {
+                    setShowNameModal(false);
+                    handleCheckout();
+                  }
+                }}
+                disabled={!customerName.trim()}
+              >
+                <Text style={styles.modalButtonText}>Confirm Order</Text>
+              </TouchableOpacity>
+             
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowNameModal(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Feedback Modal */}
+      <FeedbackModal
+        visible={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        orderDetails={recentOrder}
+      />
     </View>
+  );
+};
+
+const OrderStatusScreen = ({ navigation }) => {
+  const [orders, setOrders] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState('');
+
+  const loadOrders = async () => {
+    try {
+      setRefreshing(true);
+      const history = await OrderService.getOrderHistory();
+      const activeOrders = history.filter(order =>
+        ['pending', 'preparing', 'ready', 'completed'].includes(order.status)
+      );
+      setOrders(activeOrders.slice(0, 5));
+      setLastUpdate(new Date().toLocaleTimeString());
+    } catch (error) {
+      console.error('Error loading orders:', error);
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+
+    // Subscribe to real-time updates
+    const channel = supabase
+      .channel('customer-orders')
+      .on('postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'orders'
+        },
+        async (payload) => {
+          if (payload.new.status === 'completed') {
+            await OrderService.updateOrderStatus(payload.old.id, 'completed');
+           
+            const orderItems = payload.new.order_items || [];
+            const itemNames = orderItems.map(item =>
+              `${item.quantity}x ${item.name}`
+            ).join(', ');
+           
+            Alert.alert(
+              "🎉 Order Ready!",
+              `Your order of ${itemNames} is complete, please come pick up!`,
+              [{ text: "OK" }]
+            );
+          } else if (payload.new.status === 'declined') {
+            await OrderService.updateOrderStatus(payload.old.id, 'declined');
+           
+            Alert.alert(
+              "😔 Order Declined",
+              "We're sorry, your order was declined by the kitchen.",
+              [{ text: "OK" }]
+            );
+          } else if (payload.new.status === 'preparing') {
+            await OrderService.updateOrderStatus(payload.old.id, 'preparing');
+          } else if (payload.new.status === 'ready') {
+            await OrderService.updateOrderStatus(payload.old.id, 'ready');
+          }
+         
+          loadOrders();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  const getStatusColor = (status) => {
+    const colors = {
+      pending: Colors.warning,
+      preparing: Colors.secondary,
+      ready: Colors.primary,
+      completed: Colors.success,
+      declined: Colors.error,
+    };
+    return colors[status] || Colors.primary;
+  };
+
+  const getStatusIcon = (status) => {
+    const icons = {
+      pending: 'access-time',
+      preparing: 'restaurant',
+      ready: 'check-circle',
+      completed: 'done-all',
+      declined: 'cancel',
+    };
+    return icons[status] || 'receipt';
+  };
+
+  const getStatusMessage = (status) => {
+    const messages = {
+      pending: "⏳ Order received - waiting for kitchen",
+      preparing: "👨‍🍳 Being prepared in kitchen",
+      ready: "✅ Ready for pickup!",
+      completed: "🎉 Order completed - Thanks for your order!",
+      declined: "❌ Order declined by kitchen",
+    };
+    return messages[status] || "Order received";
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading orders..." />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={loadOrders}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Order Status</Text>
+            <View style={styles.headerRight} />
+          </View>
+
+          <Text style={styles.statusHelpText}>
+            🔄 Updates automatically when kitchen changes order status
+            {lastUpdate && `\nLast updated: ${lastUpdate}`}
+          </Text>
+
+          {orders.length > 0 ? (
+            orders.map((order) => (
+              <View key={order.id} style={[
+                styles.orderCard,
+                { borderLeftColor: getStatusColor(order.status) }
+              ]}>
+                <View style={styles.orderHeader}>
+                  <View style={styles.orderIdContainer}>
+                    <Icon name={getStatusIcon(order.status)} size={24} color={getStatusColor(order.status)} />
+                    <Text style={styles.orderId}>Order #{order.id}</Text>
+                  </View>
+                  <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
+                    {order.status.toUpperCase()}
+                  </Text>
+                </View>
+               
+                <Text style={styles.statusMessage}>
+                  {getStatusMessage(order.status)}
+                </Text>
+               
+                <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                <Text style={styles.orderDate}>{order.date}</Text>
+               
+                <View style={styles.itemsSection}>
+                  <Text style={styles.itemsLabel}>Items:</Text>
+                  {order.items.map((item, index) => (
+                    <View key={index} style={styles.orderItemContainer}>
+                      <Text style={styles.orderItem}>
+                        {item.quantity}x {item.name} - ${item.price.toFixed(2)}
+                      </Text>
+                      {item.wingFlavor && (
+                        <Text style={styles.orderItemFlavor}>
+                          Flavor: {item.wingFlavor}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+
+                <Text style={styles.orderTotal}>Total: ${order.total}</Text>
+
+                {order.status === 'ready' && (
+                  <View style={styles.readyBanner}>
+                    <Icon name="notifications" size={24} color={Colors.white} />
+                    <Text style={styles.readyText}>
+                      YOUR ORDER IS READY FOR PICKUP!
+                    </Text>
+                  </View>
+                )}
+
+                {order.status === 'completed' && (
+                  <View style={styles.completedBanner}>
+                    <Icon name="check-circle" size={24} color={Colors.white} />
+                    <Text style={styles.completedText}>
+                      Order picked up - Thank you!
+                    </Text>
+                  </View>
+                )}
+
+                {order.status === 'declined' && (
+                  <View style={styles.declinedBanner}>
+                    <Icon name="cancel" size={24} color={Colors.white} />
+                    <Text style={styles.declinedText}>
+                      Order was declined by kitchen
+                    </Text>
+                  </View>
+                )}
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="receipt" size={64} color={Colors.textSecondary} />
+              <Text style={styles.emptyStateText}>No active orders</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Your order status will appear here once you place an order
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => navigation.navigate('Menu')}
+              >
+                <Text style={styles.emptyStateButtonText}>Browse Menu</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Completed Orders Section */}
+          <View style={styles.completedSection}>
+            <Text style={styles.completedTitle}>Order Status Guide</Text>
+            <View style={styles.statusGuide}>
+              <View style={styles.statusGuideItem}>
+                <Icon name="access-time" size={20} color={Colors.warning} />
+                <Text style={styles.statusGuideText}>Pending: Order received</Text>
+              </View>
+              <View style={styles.statusGuideItem}>
+                <Icon name="restaurant" size={20} color={Colors.secondary} />
+                <Text style={styles.statusGuideText}>Preparing: In kitchen</Text>
+              </View>
+              <View style={styles.statusGuideItem}>
+                <Icon name="check-circle" size={20} color={Colors.success} />
+                <Text style={styles.statusGuideText}>Ready: Pickup now!</Text>
+              </View>
+              <View style={styles.statusGuideItem}>
+                <Icon name="cancel" size={20} color={Colors.error} />
+                <Text style={styles.statusGuideText}>Declined: Kitchen declined</Text>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const OrderHistoryScreen = ({ navigation }) => {
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [filter, setFilter] = useState('all');
+
+  useEffect(() => {
+    loadOrderHistory();
+  }, []);
+
+  const loadOrderHistory = async () => {
+    try {
+      const history = await OrderService.getOrderHistory();
+      setOrderHistory(history);
+    } catch (error) {
+      console.error('Error loading history:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredHistory = orderHistory.filter(order => {
+    if (filter === 'all') return true;
+    return order.status === filter;
+  });
+
+  const getStatusColor = (status) => {
+    const colors = {
+      pending: Colors.warning,
+      preparing: Colors.secondary,
+      ready: Colors.primary,
+      completed: Colors.success,
+      declined: Colors.error,
+    };
+    return colors[status] || Colors.primary;
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading order history..." />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Order History</Text>
+            <View style={styles.headerRight} />
+          </View>
+
+          {/* Filter Buttons */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterScroll}
+          >
+            <TouchableOpacity
+              style={[styles.filterButton, filter === 'all' && styles.filterButtonActive]}
+              onPress={() => setFilter('all')}
+            >
+              <Text style={[styles.filterButtonText, filter === 'all' && styles.filterButtonTextActive]}>
+                All Orders
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterButton, filter === 'completed' && styles.filterButtonActive]}
+              onPress={() => setFilter('completed')}
+            >
+              <Text style={[styles.filterButtonText, filter === 'completed' && styles.filterButtonTextActive]}>
+                Completed
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterButton, filter === 'ready' && styles.filterButtonActive]}
+              onPress={() => setFilter('ready')}
+            >
+              <Text style={[styles.filterButtonText, filter === 'ready' && styles.filterButtonTextActive]}>
+                Ready
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterButton, filter === 'declined' && styles.filterButtonActive]}
+              onPress={() => setFilter('declined')}
+            >
+              <Text style={[styles.filterButtonText, filter === 'declined' && styles.filterButtonTextActive]}>
+                Declined
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+
+          {filteredHistory.length > 0 ? (
+            filteredHistory.map((order) => (
+              <View key={order.id} style={[
+                styles.orderCard,
+                { borderLeftColor: getStatusColor(order.status) }
+              ]}>
+                <View style={styles.orderHeader}>
+                  <View>
+                    <Text style={styles.orderDate}>{order.date}</Text>
+                    <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                  </View>
+                  <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
+                    {order.status.toUpperCase()}
+                  </Text>
+                </View>
+
+                <View style={styles.itemsSection}>
+                  {order.items.map((item, index) => (
+                    <View key={index} style={styles.orderItemContainer}>
+                      <Text style={styles.orderItem}>
+                        {item.quantity}x {item.name} - ${item.price.toFixed(2)}
+                      </Text>
+                      {item.wingFlavor && (
+                        <Text style={styles.orderItemFlavor}>
+                          Flavor: {item.wingFlavor}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+
+                <View style={styles.orderFooter}>
+                  <Text style={styles.orderTotal}>Total: ${order.total}</Text>
+                  {order.status === 'completed' && (
+                    <TouchableOpacity
+                      style={styles.reorderButton}
+                      onPress={() => Alert.alert("Reorder", "This feature is coming soon!")}
+                    >
+                      <Text style={styles.reorderButtonText}>Reorder</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="history" size={64} color={Colors.textSecondary} />
+              <Text style={styles.emptyStateText}>No orders found</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Your order history will appear here
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => navigation.navigate('Menu')}
+              >
+                <Text style={styles.emptyStateButtonText}>Place an Order</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const FeedbackScreen = ({ navigation }) => {
+  const [recentFeedback, setRecentFeedback] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showSuggestionModal, setShowSuggestionModal] = useState(false);
+
+  useEffect(() => {
+    loadFeedback();
+  }, []);
+
+  const loadFeedback = async () => {
+    try {
+      const feedback = await OrderService.getRecentFeedback();
+      setRecentFeedback(feedback);
+    } catch (error) {
+      console.error('Error loading feedback:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading feedback..." />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Feedback & Reviews</Text>
+            <TouchableOpacity onPress={() => setShowSuggestionModal(true)}>
+              <Icon name="lightbulb" size={24} color={Colors.white} />
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.suggestionBox}
+            onPress={() => setShowSuggestionModal(true)}
+          >
+            <Icon name="lightbulb" size={24} color={Colors.yellow} />
+            <Text style={styles.suggestionBoxText}>
+              Have a menu suggestion? Tap here to share!
+            </Text>
+          </TouchableOpacity>
+
+          <Text style={styles.sectionTitle}>Recent Customer Feedback</Text>
+
+          {recentFeedback.length > 0 ? (
+            recentFeedback.map((item, index) => (
+              <View key={index} style={styles.feedbackCard}>
+                <View style={styles.feedbackHeader}>
+                  <Text style={styles.feedbackCustomer}>{item.customer_name || "Anonymous"}</Text>
+                  <View style={styles.feedbackRating}>
+                    {[...Array(5)].map((_, i) => (
+                      <Icon
+                        key={i}
+                        name={i < item.rating ? "star" : "star-outline"}
+                        size={16}
+                        color={Colors.yellow}
+                      />
+                    ))}
+                  </View>
+                </View>
+                <Text style={styles.feedbackComment}>{item.comment}</Text>
+                <Text style={styles.feedbackTime}>
+                  {new Date(item.created_at).toLocaleDateString()}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="star" size={64} color={Colors.textSecondary} />
+              <Text style={styles.emptyStateText}>No feedback yet</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Be the first to leave feedback!
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.ratingInfo}>
+            <Text style={styles.ratingInfoTitle}>Why Leave Feedback?</Text>
+            <Text style={styles.ratingInfoText}>
+              • Help us improve our menu and service
+              {"\n"}• Share your favorite items with others
+              {"\n"}• Get better recommendations
+              {"\n"}• Earn rewards (coming soon!)
+            </Text>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+
+      <SuggestionModal
+        visible={showSuggestionModal}
+        onClose={() => setShowSuggestionModal(false)}
+      />
+    </View>
+  );
+};
+
+const SuggestionsScreen = ({ navigation }) => {
+  const [suggestions, setSuggestions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadSuggestions();
+  }, []);
+
+  const loadSuggestions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('suggestions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (!error) {
+        setSuggestions(data || []);
+      }
+    } catch (error) {
+      console.error('Error loading suggestions:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <LoadingSpinner message="Loading suggestions..." />;
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Menu Suggestions</Text>
+            <View style={styles.headerRight} />
+          </View>
+
+          <View style={styles.suggestionIntro}>
+            <Icon name="lightbulb" size={48} color={Colors.yellow} />
+            <Text style={styles.suggestionIntroText}>
+              See what others are suggesting for our menu!
+            </Text>
+          </View>
+
+          {suggestions.length > 0 ? (
+            suggestions.map((item, index) => (
+              <View key={item.id} style={styles.suggestionCard}>
+                <View style={styles.suggestionHeader}>
+                  <Text style={styles.suggestionCustomer}>{item.customer_name || "Anonymous"}</Text>
+                  <Text style={styles.suggestionTime}>
+                    {new Date(item.created_at).toLocaleDateString()}
+                  </Text>
+                </View>
+                <Text style={styles.suggestionText}>{item.suggestion}</Text>
+               
+                <View style={styles.suggestionActions}>
+                  <TouchableOpacity style={styles.voteButton}>
+                    <Icon name="thumb-up" size={16} color={Colors.textSecondary} />
+                    <Text style={styles.voteText}>Helpful</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyState}>
+              <Icon name="lightbulb-outline" size={64} color={Colors.textSecondary} />
+              <Text style={styles.emptyStateText}>No suggestions yet</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Be the first to suggest a new menu item!
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.suggestionTips}>
+            <Text style={styles.suggestionTipsTitle}>Popular Suggestion Ideas:</Text>
+            <Text style={styles.suggestionTipsText}>
+              • Vegetarian/Vegan options
+              {"\n"}• Breakfast items
+              {"\n"}• International cuisine
+              {"\n"}• Healthier alternatives
+              {"\n"}• Seasonal specials
+              {"\n"}• Desserts & snacks
+            </Text>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+const ProfileScreen = ({ navigation }) => {
+  const { user, logout } = useAuth();
+  const [orderStats, setOrderStats] = useState({ total: 0, lastOrder: null });
+
+  useEffect(() => {
+    loadOrderStats();
+  }, []);
+
+  const loadOrderStats = async () => {
+    const history = await OrderService.getOrderHistory();
+    setOrderStats({
+      total: history.length,
+      lastOrder: history[0] || null
+    });
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: async () => {
+            await logout();
+            navigation.navigate('Login');
+          }
+        }
+      ]
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Icon name="arrow-back" size={24} color={Colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Your Profile</Text>
+            <View style={styles.headerRight} />
+          </View>
+
+          <View style={styles.profileCard}>
+            <View style={styles.profileAvatar}>
+              <Icon name="person" size={64} color={Colors.primary} />
+            </View>
+           
+            <Text style={styles.profileName}>{user?.name || 'Guest User'}</Text>
+            <Text style={styles.profileEmail}>{user?.email || 'guest@gitgrub.com'}</Text>
+           
+            {user?.username !== 'Guest' && (
+              <Text style={styles.profileMemberSince}>Member since 2025</Text>
+            )}
+          </View>
+
+          <View style={styles.statsContainer}>
+            <View style={styles.statItem}>
+              <Icon name="receipt" size={32} color={Colors.primary} />
+              <Text style={styles.statNumber}>{orderStats.total}</Text>
+              <Text style={styles.statLabel}>Total Orders</Text>
+            </View>
+           
+            <View style={styles.statItem}>
+              <Icon name="star" size={32} color={Colors.yellow} />
+              <Text style={styles.statNumber}>0</Text>
+              <Text style={styles.statLabel}>Reviews</Text>
+            </View>
+           
+            <View style={styles.statItem}>
+              <Icon name="favorite" size={32} color={Colors.error} />
+              <Text style={styles.statNumber}>0</Text>
+              <Text style={styles.statLabel}>Favorites</Text>
+            </View>
+          </View>
+
+          {orderStats.lastOrder && (
+            <View style={styles.lastOrderCard}>
+              <Text style={styles.lastOrderTitle}>Last Order</Text>
+              <Text style={styles.lastOrderText}>
+                #{orderStats.lastOrder.id} - {orderStats.lastOrder.date}
+              </Text>
+              <Text style={styles.lastOrderText}>
+                Total: ${orderStats.lastOrder.total}
+              </Text>
+              <TouchableOpacity
+                style={styles.viewOrderButton}
+                onPress={() => navigation.navigate('OrderHistory')}
+              >
+                <Text style={styles.viewOrderButtonText}>View Order Details</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('OrderStatus')}
+          >
+            <Icon name="assignment" size={24} color={Colors.white} />
+            <Text style={styles.buttonText}> Check Order Status</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('OrderHistory')}
+          >
+            <Icon name="history" size={24} color={Colors.white} />
+            <Text style={styles.buttonText}> View Order History</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('Feedback')}
+          >
+            <Icon name="star" size={24} color={Colors.white} />
+            <Text style={styles.buttonText}> Leave Feedback</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => navigation.navigate('Suggestions')}
+          >
+            <Icon name="lightbulb" size={24} color={Colors.white} />
+            <Text style={styles.buttonText}> Make a Suggestion</Text>
+          </TouchableOpacity>
+
+          {user?.username !== 'Guest' && (
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: Colors.error }]}
+              onPress={handleLogout}
+            >
+              <Icon name="logout" size={24} color={Colors.white} />
+              <Text style={styles.buttonText}> Logout</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+};
+
+// ----------------------------
+// NAVIGATION & MAIN APP
+// ----------------------------
+const Stack = createStackNavigator();
+
+const App = () => {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <LoadingSpinner />;
+  }
+
+  return (
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName="Login" // Login is now the first screen
+        screenOptions={({ navigation }) => ({
+          headerStyle: {
+            backgroundColor: Colors.background,
+            elevation: 0,
+            shadowOpacity: 0,
+          },
+          headerTintColor: Colors.white,
+          headerTitleStyle: {
+            fontWeight: 'bold',
+            fontSize: 20,
+          },
+          headerTitleAlign: 'center',
+          headerRight: () => user ? (
+            <ProfileIcon onPress={() => navigation.navigate('Profile')} />
+          ) : null,
+        })}
+      >
+        <Stack.Screen
+          name="Login"
+          component={LoginScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Register"
+          component={RegisterScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{
+            title: 'GitGrub',
+            headerRight: () => null
+          }}
+        />
+        <Stack.Screen
+          name="Menu"
+          component={MenuScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen
+          name="OrderStatus"
+          component={OrderStatusScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen
+          name="OrderHistory"
+          component={OrderHistoryScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen
+          name="Feedback"
+          component={FeedbackScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen
+          name="Suggestions"
+          component={SuggestionsScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+        <Stack.Screen
+          name="Profile"
+          component={ProfileScreen}
+          options={{
+            headerShown: false
+          }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 };
 
@@ -665,6 +2365,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   safeArea: {
+    flex: 1,
+  },
+  scrollView: {
     flex: 1,
   },
   scrollContent: {
@@ -692,6 +2395,9 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontStyle: 'italic',
   },
+  logo: {
+    marginTop: 20,
+  },
   smallLogo: {
     marginBottom: 10,
   },
@@ -706,6 +2412,17 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.primary,
+  },
+  introText: {
+    fontSize: 18,
+    color: Colors.white,
+    marginBottom: 30,
+    textAlign: 'center',
+    backgroundColor: Colors.cardBackground,
+    padding: 15,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.secondary,
   },
   button: {
     backgroundColor: Colors.primary,
@@ -723,6 +2440,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 5,
     elevation: 6,
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   secondaryButton: {
     backgroundColor: Colors.secondary,
@@ -741,48 +2460,78 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary,
     fontSize: 16,
+    color: Colors.black,
   },
   searchInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    flex: 1,
     padding: 12,
-    borderRadius: 10,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: Colors.primary,
     fontSize: 16,
+    color: Colors.black,
+    marginLeft: 10,
   },
   menuItemContainer: {
     marginBottom: 20,
     width: '100%',
   },
   menuSection: {
-    fontSize: 20,
+    marginBottom: 25,
+  },
+  sectionTitle: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: Colors.white,
-    marginTop: 15,
-    marginBottom: 10,
-    backgroundColor: Colors.cardBackground,
-    padding: 12,
-    borderRadius: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: Colors.primary,
+    marginBottom: 15,
+    marginTop: 10,
   },
   menuItemButton: {
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  menuItem: {
-    fontSize: 18,
-    color: Colors.white,
-    padding: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 8,
+  menuItemContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: Colors.cardBackground,
+    padding: 15,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(151, 93, 254, 0.2)',
   },
-  separator: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginVertical: 15,
+  menuItemTextContainer: {
+    flex: 1,
+    marginRight: 15,
+  },
+  menuItemName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 5,
+  },
+  wingIndicator: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontStyle: 'italic',
+  },
+  menuItemPriceContainer: {
+    alignItems: 'flex-end',
+  },
+  menuItemPrice: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.primary,
+    marginBottom: 10,
+  },
+  addButton: {
+    backgroundColor: Colors.primary,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addButtonText: {
+    color: Colors.white,
+    fontSize: 20,
+    fontWeight: 'bold',
   },
   cartContainer: {
     backgroundColor: 'rgba(31, 64, 104, 0.95)',
@@ -790,12 +2539,25 @@ const styles = StyleSheet.create({
     borderTopWidth: 2,
     borderTopColor: Colors.primary,
   },
+  cartHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
   cartTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: Colors.white,
-    marginBottom: 10,
-    textAlign: 'center',
+  },
+  clearCartText: {
+    color: Colors.error,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cartItemsScroll: {
+    maxHeight: 200,
+    marginBottom: 15,
   },
   cartItem: {
     flexDirection: 'row',
@@ -808,11 +2570,18 @@ const styles = StyleSheet.create({
   },
   cartItemInfo: {
     flex: 1,
+    marginRight: 10,
   },
-  cartItemText: {
+  cartItemName: {
     fontSize: 16,
     color: Colors.white,
     fontWeight: '600',
+  },
+  wingFlavorText: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontStyle: 'italic',
+    marginTop: 2,
   },
   cartItemPrice: {
     fontSize: 14,
@@ -822,7 +2591,7 @@ const styles = StyleSheet.create({
   quantityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   quantityButton: {
     backgroundColor: Colors.primary,
@@ -836,6 +2605,7 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontWeight: 'bold',
     fontSize: 16,
+    lineHeight: 16,
   },
   quantityText: {
     color: Colors.white,
@@ -846,49 +2616,181 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     padding: 5,
+    marginLeft: 5,
   },
   removeItemText: {
-    fontSize: 16,
+    fontSize: 18,
+    color: Colors.error,
   },
-  cartTotal: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.white,
+  cartFooter: {
     marginTop: 10,
+  },
+  totalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 15,
-    textAlign: 'center',
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  totalLabel: {
+    fontSize: 18,
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  totalAmount: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
+  checkoutButton: {
+    backgroundColor: Colors.success,
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  checkoutButtonDisabled: {
+    backgroundColor: Colors.textSecondary,
+    opacity: 0.7,
+  },
+  checkoutButtonText: {
+    color: Colors.white,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  emptyCartContainer: {
+    alignItems: 'center',
+    padding: 20,
   },
   emptyCartText: {
-    fontSize: 16,
-    color: Colors.white,
+    fontSize: 18,
+    color: Colors.textSecondary,
+    marginTop: 10,
+    marginBottom: 5,
+  },
+  emptyCartSubtext: {
+    fontSize: 14,
+    color: Colors.textSecondary,
     textAlign: 'center',
-    marginVertical: 10,
+  },
+  orderCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    shadowColor: Colors.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  orderHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  orderIdContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  orderId: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.black,
+  },
+  orderDate: {
+    fontSize: 14,
+    color: Colors.black,
+    opacity: 0.7,
+  },
+  orderCustomer: {
+    fontSize: 16,
+    color: Colors.black,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  orderStatus: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+  },
+  orderItemContainer: {
+    marginBottom: 5,
+  },
+  orderItem: {
+    fontSize: 14,
+    color: Colors.black,
+    marginLeft: 10,
+  },
+  orderItemFlavor: {
+    fontSize: 12,
+    color: Colors.black,
+    opacity: 0.7,
+    marginLeft: 20,
     fontStyle: 'italic',
   },
-  kitchenStatus: {
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 15,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: Colors.white,
+  orderTotal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 10,
+    color: Colors.primary,
+    textAlign: 'right',
   },
-  kitchenStatusText: {
+  orderFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  reorderButton: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 5,
+  },
+  reorderButtonText: {
     color: Colors.white,
     fontWeight: 'bold',
+    fontSize: 12,
+  },
+  emptyHistoryText: {
+    fontSize: 18,
+    color: Colors.white,
+    textAlign: 'center',
+    marginTop: 50,
+    fontStyle: 'italic',
+  },
+  profileInfo: {
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  profileText: {
     fontSize: 16,
+    color: Colors.white,
+    marginBottom: 10,
   },
   categoryScroll: {
     marginBottom: 15,
   },
   categoryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 15,
-    paddingVertical: 8,
+    paddingVertical: 10,
     backgroundColor: Colors.secondary,
     borderRadius: 20,
     marginRight: 10,
     borderWidth: 1,
     borderColor: Colors.primary,
+    gap: 5,
   },
   categoryButtonActive: {
     backgroundColor: Colors.primary,
@@ -896,6 +2798,10 @@ const styles = StyleSheet.create({
   categoryButtonText: {
     color: Colors.white,
     fontWeight: '600',
+    fontSize: 14,
+  },
+  categoryButtonTextActive: {
+    fontWeight: 'bold',
   },
   loadingContainer: {
     flex: 1,
@@ -921,6 +2827,615 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  kitchenClosedBanner: {
+    backgroundColor: Colors.error,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  kitchenClosedText: {
+    color: Colors.white,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingTop: Platform.OS === 'ios' ? 0 : 10,
+  },
+  backButton: {
+    padding: 5,
+  },
+  headerRight: {
+    width: 40,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  menuButton: {
+    backgroundColor: Colors.primary,
+    padding: 15,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginBottom: 15,
+  },
+  menuButtonText: {
+    color: Colors.white,
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  quickActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+    gap: 10,
+  },
+  quickActionButton: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: Colors.cardBackground,
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    gap: 8,
+  },
+  quickActionText: {
+    color: Colors.white,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  kitchenStatusCard: {
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.white,
+  },
+  kitchenStatusText: {
+    color: Colors.white,
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  kitchenStatusSubtext: {
+    color: Colors.white,
+    fontSize: 12,
+    opacity: 0.9,
+  },
+  linkText: {
+    color: Colors.primary,
+    textAlign: 'center',
+    marginTop: 15,
+    fontSize: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: Colors.white,
+    borderRadius: 15,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: Colors.black,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  submitButton: {
+    backgroundColor: Colors.success,
+  },
+  cancelButton: {
+    backgroundColor: Colors.secondary,
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  modalButtonText: {
+    color: Colors.white,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  nameInput: {
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    marginBottom: 20,
+    color: Colors.black,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginVertical: 20,
+    gap: 10,
+  },
+  ratingText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: Colors.black,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  commentInput: {
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    minHeight: 120,
+    marginBottom: 24,
+    textAlignVertical: 'top',
+    color: Colors.black,
+  },
+  suggestionInput: {
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    minHeight: 100,
+    marginBottom: 24,
+    textAlignVertical: 'top',
+    color: Colors.black,
+  },
+  statusHelpText: {
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: 20,
+  },
+  statusMessage: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: Colors.primary,
+  },
+  readyBanner: {
+    backgroundColor: Colors.success,
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  readyText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  completedBanner: {
+    backgroundColor: Colors.primary,
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  completedText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  declinedBanner: {
+    backgroundColor: Colors.error,
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  declinedText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  itemsSection: {
+    marginVertical: 10,
+  },
+  itemsLabel: {
+    fontWeight: 'bold',
+    color: Colors.black,
+    marginBottom: 5,
+  },
+  completedSection: {
+    marginTop: 30,
+    padding: 15,
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 10,
+  },
+  completedTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  statusGuide: {
+    gap: 10,
+  },
+  statusGuideItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  statusGuideText: {
+    color: Colors.white,
+    fontSize: 14,
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 50,
+    padding: 30,
+  },
+  emptyStateEmoji: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  emptyStateText: {
+    color: Colors.textSecondary,
+    fontSize: 20,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyStateSubtext: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  emptyStateButton: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  emptyStateButtonText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+  },
+  emptyMenuContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyMenuText: {
+    fontSize: 18,
+    color: Colors.textSecondary,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyMenuSubtext: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  filterScroll: {
+    marginBottom: 20,
+  },
+  filterButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: Colors.secondary,
+    borderRadius: 20,
+    marginRight: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  filterButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  filterButtonText: {
+    color: Colors.white,
+    fontWeight: '600',
+  },
+  filterButtonTextActive: {
+    fontWeight: 'bold',
+  },
+  suggestionBox: {
+    backgroundColor: Colors.warning,
+    padding: 15,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginBottom: 20,
+  },
+  suggestionBoxText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  feedbackCard: {
+    backgroundColor: Colors.cardBackground,
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.1)',
+  },
+  feedbackHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  feedbackCustomer: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  feedbackRating: {
+    flexDirection: 'row',
+    gap: 2,
+  },
+  feedbackComment: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  feedbackTime: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    textAlign: 'right',
+  },
+  ratingInfo: {
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+    marginTop: 20,
+  },
+  ratingInfoTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 10,
+  },
+  ratingInfoText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  suggestionIntro: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  suggestionIntroText: {
+    fontSize: 18,
+    color: Colors.white,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  suggestionCard: {
+    backgroundColor: Colors.cardBackground,
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  suggestionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  suggestionCustomer: {
+    color: Colors.white,
+    fontWeight: 'bold',
+  },
+  suggestionTime: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  suggestionText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  suggestionActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  voteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    padding: 5,
+  },
+  voteText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  suggestionTips: {
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+    marginTop: 20,
+  },
+  suggestionTipsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 10,
+  },
+  suggestionTipsText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  profileCard: {
+    alignItems: 'center',
+    backgroundColor: Colors.cardBackground,
+    padding: 30,
+    borderRadius: 15,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+  },
+  profileAvatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(151, 93, 254, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+    borderWidth: 3,
+    borderColor: Colors.primary,
+  },
+  profileName: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 5,
+  },
+  profileEmail: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+    marginBottom: 5,
+  },
+  profileMemberSince: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: Colors.primary,
+    marginVertical: 5,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  lastOrderCard: {
+    backgroundColor: Colors.cardBackground,
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+  },
+  lastOrderTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.white,
+    marginBottom: 10,
+  },
+  lastOrderText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  viewOrderButton: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginTop: 10,
+  },
+  viewOrderButtonText: {
+    color: Colors.white,
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  profileIcon: {
+    marginRight: 15,
+    padding: 5,
+  },
+  flavorOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  flavorOptionSelected: {
+    backgroundColor: Colors.primary + '20',
+    borderColor: Colors.primary,
+  },
+  flavorText: {
+    fontSize: 16,
+    color: Colors.black,
+  },
+  flavorTextSelected: {
+    fontWeight: 'bold',
+    color: Colors.primary,
+  },
 });
 
-export default MenuScreen;
+export default App;
