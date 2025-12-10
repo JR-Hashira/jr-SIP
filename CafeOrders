@@ -1,4 +1,4 @@
-// App.js - Complete Updated Ordering Side with All Features
+// App.js - Complete Ordering System with Inventory Management and Real-time Order Status
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Platform,
@@ -48,10 +48,12 @@ const Colors = {
   darkBlue: '#0d1938',
   lightPurple: '#b794f6',
   yellow: '#FFD700',
+  inStock: '#4CAF50',
+  outOfStock: '#FF5252',
 };
 
 // ----------------------------
-// MENU ITEMS (Simplified - No descriptions)
+// INVENTORY-AWARE MENU ITEMS
 // ----------------------------
 const MenuItems = {
   pizza: [
@@ -85,24 +87,22 @@ const WING_FLAVORS = [
 ];
 
 // ----------------------------
-// ORDER SERVICE - UPDATED
+// ORDER SERVICE - UPDATED WITH REAL-TIME STATUS
 // ----------------------------
 const OrderService = {
   async checkKitchenStatus() {
     try {
       console.log('🔍 Checking kitchen status from Kitchens table...');
-      // ✅ FIXED: Changed from 'kitchens' to 'Kitchens'
       const { data, error } = await supabase
-        .from('Kitchens')  // ✅ FIXED
+        .from('Kitchens')
         .select('is_open')
         .eq('id', KITCHEN_ID)
         .single();
 
       if (error) {
         console.log('❌ Kitchen not found, creating default...', error);
-        // ✅ FIXED: Changed from 'kitchens' to 'Kitchens'
         const { error: createError } = await supabase
-          .from('Kitchens')  // ✅ FIXED
+          .from('Kitchens')
           .insert([{
             id: KITCHEN_ID,
             name: 'Main Kitchen',
@@ -126,6 +126,59 @@ const OrderService = {
     }
   },
 
+  async checkItemAvailability(items) {
+    try {
+      console.log('📦 Checking inventory availability for items:', items.map(i => i.name));
+      
+      const { data: inventory, error } = await supabase
+        .from('inventory')
+        .select('name, is_in_stock')
+        .in('name', items.map(item => item.name));
+
+      if (error) {
+        console.error('❌ Error checking inventory:', error);
+        // If inventory check fails, allow ordering as fallback
+        return { 
+          available: true, 
+          outOfStockItems: [],
+          message: '' 
+        };
+      }
+
+      const outOfStockItems = items.filter(item => {
+        const inventoryItem = inventory.find(inv => inv.name === item.name);
+        return inventoryItem && !inventoryItem.is_in_stock;
+      });
+
+      console.log('📊 Inventory check results:', {
+        totalItems: items.length,
+        outOfStockCount: outOfStockItems.length,
+        outOfStockItems: outOfStockItems.map(i => i.name)
+      });
+
+      if (outOfStockItems.length > 0) {
+        return {
+          available: false,
+          outOfStockItems: outOfStockItems.map(item => item.name),
+          message: `Sorry! We're currently out of: ${outOfStockItems.map(item => item.name).join(', ')}`
+        };
+      }
+
+      return { 
+        available: true, 
+        outOfStockItems: [],
+        message: '' 
+      };
+    } catch (error) {
+      console.error('❌ Inventory check error:', error);
+      return { 
+        available: true, // Fallback to allow ordering
+        outOfStockItems: [],
+        message: ''
+      };
+    }
+  },
+
   async sendOrderToSupabase(order) {
     try {
       // Check kitchen status first
@@ -134,6 +187,18 @@ const OrderService = {
         return {
           success: false,
           error: { message: 'KITCHEN_CLOSED' }
+        };
+      }
+
+      // Check inventory availability BEFORE processing order
+      const inventoryCheck = await this.checkItemAvailability(order.items);
+      if (!inventoryCheck.available) {
+        return {
+          success: false,
+          error: { 
+            message: 'ITEMS_OUT_OF_STOCK',
+            details: inventoryCheck
+          }
         };
       }
 
@@ -154,6 +219,7 @@ const OrderService = {
         status: 'pending',
         kitchen_id: KITCHEN_ID,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       };
 
       console.log('📤 Sending order to Supabase:', orderData);
@@ -168,7 +234,7 @@ const OrderService = {
       }
 
       console.log('✅ Order sent successfully:', data);
-      return { success: true, data };
+      return { success: true, data: data[0] };
     } catch (error) {
       console.error('❌ Order service error:', error);
       return { success: false, error };
@@ -219,7 +285,8 @@ const OrderService = {
         ...order,
         id: Date.now(),
         date: new Date().toLocaleString(),
-        status: 'pending'
+        status: 'pending',
+        timestamp: Date.now()
       };
 
       const existingHistory = await AsyncStorage.getItem('orderHistory');
@@ -228,7 +295,7 @@ const OrderService = {
       const updatedHistory = [orderWithMeta, ...history].slice(0, 50);
       await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
      
-      return { success: true };
+      return { success: true, orderId: orderWithMeta.id };
     } catch (error) {
       console.error('Save history error:', error);
       return { success: false, error };
@@ -248,9 +315,16 @@ const OrderService = {
   async updateOrderStatus(orderId, newStatus) {
     try {
       const history = await this.getOrderHistory();
-      const updatedHistory = history.map(order =>
-        order.id === orderId ? { ...order, status: newStatus } : order
-      );
+      const updatedHistory = history.map(order => {
+        if (order.id === orderId) {
+          return { 
+            ...order, 
+            status: newStatus,
+            updated_at: new Date().toLocaleString()
+          };
+        }
+        return order;
+      });
      
       await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
       return { success: true };
@@ -273,6 +347,71 @@ const OrderService = {
     } catch (error) {
       console.error('Get feedback error:', error);
       return [];
+    }
+  },
+
+  async getInventoryStatus() {
+    try {
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('name, is_in_stock')
+        .order('name');
+
+      if (error) {
+        console.error('Error fetching inventory:', error);
+        return {};
+      }
+
+      // Convert to object for easy lookup
+      const statusMap = {};
+      data.forEach(item => {
+        statusMap[item.name] = item.is_in_stock;
+      });
+
+      return statusMap;
+    } catch (error) {
+      console.error('Error getting inventory status:', error);
+      return {};
+    }
+  },
+
+  async syncOrderFromSupabase(supabaseOrder) {
+    try {
+      const history = await this.getOrderHistory();
+      
+      // Check if order already exists in local history
+      const existingOrderIndex = history.findIndex(order => 
+        order.supabase_id === supabaseOrder.id
+      );
+
+      const orderData = {
+        id: supabaseOrder.id || Date.now(),
+        supabase_id: supabaseOrder.id,
+        customerName: supabaseOrder.customer_name,
+        items: Array.isArray(supabaseOrder.order_items) ? supabaseOrder.order_items : [],
+        total: supabaseOrder.total_price?.toString() || '0.00',
+        status: supabaseOrder.status || 'pending',
+        date: new Date(supabaseOrder.created_at).toLocaleString(),
+        updated_at: new Date(supabaseOrder.updated_at || supabaseOrder.created_at).toLocaleString(),
+        timestamp: Date.now()
+      };
+
+      if (existingOrderIndex >= 0) {
+        // Update existing order
+        history[existingOrderIndex] = orderData;
+      } else {
+        // Add new order
+        history.unshift(orderData);
+      }
+
+      // Keep only latest 50 orders
+      const updatedHistory = history.slice(0, 50);
+      await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
+      
+      return { success: true, order: orderData };
+    } catch (error) {
+      console.error('Sync order error:', error);
+      return { success: false, error };
     }
   }
 };
@@ -467,10 +606,20 @@ const WingFlavorModal = ({ visible, item, onClose, onAdd }) => {
   );
 };
 
-const MenuItem = ({ item, onAddToCart }) => {
+// Updated MenuItem with inventory status
+const MenuItem = ({ item, onAddToCart, isOutOfStock = false }) => {
   const [showWingModal, setShowWingModal] = useState(false);
 
   const handlePress = () => {
+    if (isOutOfStock) {
+      Alert.alert(
+        "Out of Stock",
+        "Sorry, this item is currently unavailable.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
     if (item.isWings) {
       setShowWingModal(true);
     } else {
@@ -481,32 +630,57 @@ const MenuItem = ({ item, onAddToCart }) => {
   return (
     <>
       <TouchableOpacity
-        style={styles.menuItemButton}
+        style={[styles.menuItemButton, isOutOfStock && styles.outOfStockItem]}
         onPress={handlePress}
-        activeOpacity={0.7}
+        activeOpacity={isOutOfStock ? 1 : 0.7}
+        disabled={isOutOfStock}
       >
         <View style={styles.menuItemContent}>
           <View style={styles.menuItemTextContainer}>
-            <Text style={styles.menuItemName}>{item.name}</Text>
-            {item.isWings && (
+            <Text style={[
+              styles.menuItemName,
+              isOutOfStock && styles.outOfStockText
+            ]}>
+              {item.name}
+            </Text>
+            {isOutOfStock && (
+              <Text style={styles.outOfStockBadge}>
+                <Icon name="close" size={12} color={Colors.error} /> OUT OF STOCK
+              </Text>
+            )}
+            {!isOutOfStock && item.isWings && (
               <Text style={styles.wingIndicator}>
                 <Icon name="info" size={14} color={Colors.primary} /> Choose flavor when added
               </Text>
             )}
           </View>
           <View style={styles.menuItemPriceContainer}>
-            <Text style={styles.menuItemPrice}>${item.price.toFixed(2)}</Text>
+            <Text style={[
+              styles.menuItemPrice,
+              isOutOfStock && styles.outOfStockText
+            ]}>
+              ${item.price.toFixed(2)}
+            </Text>
             <TouchableOpacity
-              style={styles.addButton}
+              style={[
+                styles.addButton,
+                isOutOfStock && styles.addButtonDisabled
+              ]}
               onPress={handlePress}
+              disabled={isOutOfStock}
             >
-              <Text style={styles.addButtonText}>+</Text>
+              <Text style={[
+                styles.addButtonText,
+                isOutOfStock && styles.addButtonTextDisabled
+              ]}>
+                {isOutOfStock ? '✗' : '+'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
       </TouchableOpacity>
      
-      {item.isWings && (
+      {item.isWings && !isOutOfStock && (
         <WingFlavorModal
           visible={showWingModal}
           item={item}
@@ -518,33 +692,65 @@ const MenuItem = ({ item, onAddToCart }) => {
   );
 };
 
-const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
-  <View style={styles.cartItem}>
+// Updated CartItem with inventory warning
+const CartItem = ({ item, onRemove, onUpdateQuantity, isOutOfStock = false }) => (
+  <View style={[
+    styles.cartItem,
+    isOutOfStock && styles.cartItemOutOfStock
+  ]}>
     <View style={styles.cartItemInfo}>
-      <Text style={styles.cartItemName} numberOfLines={1}>
+      <Text style={[
+        styles.cartItemName,
+        isOutOfStock && styles.cartItemNameOutOfStock
+      ]} numberOfLines={1}>
         {item.name}
+        {isOutOfStock && ' (Out of Stock)'}
       </Text>
       {item.wingFlavor && (
         <Text style={styles.wingFlavorText}>Flavor: {item.wingFlavor}</Text>
       )}
-      <Text style={styles.cartItemPrice}>${item.price.toFixed(2)}</Text>
+      <Text style={[
+        styles.cartItemPrice,
+        isOutOfStock && styles.cartItemPriceOutOfStock
+      ]}>
+        ${item.price.toFixed(2)}
+      </Text>
     </View>
    
     <View style={styles.quantityContainer}>
       <TouchableOpacity
-        style={styles.quantityButton}
+        style={[
+          styles.quantityButton,
+          isOutOfStock && styles.quantityButtonDisabled
+        ]}
         onPress={() => onUpdateQuantity(item.cartId, item.quantity - 1)}
+        disabled={isOutOfStock}
       >
-        <Text style={styles.quantityButtonText}>-</Text>
+        <Text style={[
+          styles.quantityButtonText,
+          isOutOfStock && styles.quantityButtonTextDisabled
+        ]}>-</Text>
       </TouchableOpacity>
      
-      <Text style={styles.quantityText}>{item.quantity}</Text>
+      <Text style={[
+        styles.quantityText,
+        isOutOfStock && styles.quantityTextOutOfStock
+      ]}>
+        {item.quantity}
+      </Text>
      
       <TouchableOpacity
-        style={styles.quantityButton}
+        style={[
+          styles.quantityButton,
+          isOutOfStock && styles.quantityButtonDisabled
+        ]}
         onPress={() => onUpdateQuantity(item.cartId, item.quantity + 1)}
+        disabled={isOutOfStock}
       >
-        <Text style={styles.quantityButtonText}>+</Text>
+        <Text style={[
+          styles.quantityButtonText,
+          isOutOfStock && styles.quantityButtonTextDisabled
+        ]}>+</Text>
       </TouchableOpacity>
      
       <TouchableOpacity
@@ -554,6 +760,15 @@ const CartItem = ({ item, onRemove, onUpdateQuantity }) => (
         <Text style={styles.removeItemText}>🗑️</Text>
       </TouchableOpacity>
     </View>
+    
+    {isOutOfStock && (
+      <View style={styles.outOfStockWarning}>
+        <Icon name="warning" size={14} color={Colors.warning} />
+        <Text style={styles.outOfStockWarningText}>
+          This item is out of stock and cannot be ordered
+        </Text>
+      </View>
+    )}
   </View>
 );
 
@@ -729,6 +944,102 @@ const SuggestionModal = ({ visible, onClose }) => {
         </View>
       </View>
     </Modal>
+  );
+};
+
+// Updated checkout flow with inventory checks
+const CheckoutSection = ({ 
+  cart, 
+  total, 
+  itemCount, 
+  kitchenStatus, 
+  onCheckout,
+  isCheckingOut,
+  inventoryStatus = {},
+  clearCart
+}) => {
+  const hasOutOfStockItems = cart.some(item => inventoryStatus[item.name] === false);
+  const outOfStockItems = cart.filter(item => inventoryStatus[item.name] === false);
+  
+  return (
+    <View style={styles.cartContainer}>
+      <View style={styles.cartHeader}>
+        <Text style={styles.cartTitle}>
+          Your Order ({itemCount} {itemCount === 1 ? 'item' : 'items'})
+        </Text>
+        {cart.length > 0 && (
+          <TouchableOpacity onPress={() => {
+            Alert.alert(
+              "Clear Cart",
+              "Remove all items from cart?",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Clear", style: "destructive", onPress: clearCart }
+              ]
+            );
+          }}>
+            <Text style={styles.clearCartText}>Clear All</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {cart.length > 0 ? (
+        <>
+          <ScrollView style={styles.cartItemsScroll} showsVerticalScrollIndicator={false}>
+            {cart.map((item) => (
+              <CartItem
+                key={item.cartId}
+                item={item}
+                onRemove={() => {}}
+                onUpdateQuantity={() => {}}
+                isOutOfStock={inventoryStatus[item.name] === false}
+              />
+            ))}
+          </ScrollView>
+
+          {/* Out of Stock Warning */}
+          {hasOutOfStockItems && (
+            <View style={styles.outOfStockBanner}>
+              <Icon name="warning" size={20} color={Colors.warning} />
+              <Text style={styles.outOfStockBannerText}>
+                {outOfStockItems.length} item(s) out of stock - please remove to checkout
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.cartFooter}>
+            <View style={styles.totalContainer}>
+              <Text style={styles.totalLabel}>Total:</Text>
+              <Text style={styles.totalAmount}>${total}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.checkoutButton,
+                (!kitchenStatus || isCheckingOut || hasOutOfStockItems) && styles.checkoutButtonDisabled
+              ]}
+              onPress={onCheckout}
+              disabled={!kitchenStatus || isCheckingOut || hasOutOfStockItems}
+            >
+              <Text style={styles.checkoutButtonText}>
+                {isCheckingOut ? 'Processing...' :
+                 !kitchenStatus ? 'Kitchen Closed' :
+                 hasOutOfStockItems ? 'Remove Out of Stock Items' :
+                 `Checkout - $${total}`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        <View style={styles.emptyCartContainer}>
+          <Icon name="shopping-cart" size={48} color={Colors.textSecondary} />
+          <Text style={styles.emptyCartText}>Your cart is empty</Text>
+          <Text style={styles.emptyCartSubtext}>
+            Add items from the menu above
+          </Text>
+        </View>
+      )}
+    </View>
   );
 };
 
@@ -1083,6 +1394,9 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
+// ----------------------------
+// MAIN MENU SCREEN - UPDATED WITH INVENTORY
+// ----------------------------
 const MenuScreen = ({ navigation }) => {
   const {
     cart,
@@ -1103,6 +1417,8 @@ const MenuScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [recentOrder, setRecentOrder] = useState(null);
+  const [inventoryStatus, setInventoryStatus] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
 
   const categories = [
     { key: 'all', label: 'All Items', icon: 'apps' },
@@ -1112,36 +1428,62 @@ const MenuScreen = ({ navigation }) => {
     { key: 'pretzels', label: 'Pretzels', icon: 'bakery-dining' },
   ];
 
+  const loadInventoryStatus = useCallback(async () => {
+    try {
+      console.log('📦 Loading inventory status...');
+      const status = await OrderService.getInventoryStatus();
+      setInventoryStatus(status);
+      console.log('✅ Inventory status loaded:', Object.keys(status).length, 'items');
+    } catch (error) {
+      console.error('Error loading inventory:', error);
+    }
+  }, []);
+
+  const refreshAllData = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        checkKitchenStatus(),
+        loadInventoryStatus()
+      ]);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadInventoryStatus]);
+
   useEffect(() => {
-    checkKitchenStatus();
+    refreshAllData();
    
-    // Set up real-time subscription for order status changes
+    // Set up real-time subscription for inventory updates
     const channel = supabase
-      .channel('order-status-updates')
+      .channel('inventory-updates')
       .on('postgres_changes',
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'orders'
+          table: 'inventory'
         },
         (payload) => {
-          if (payload.new.status === 'completed') {
-            const orderItems = payload.new.order_items || [];
-            const itemNames = orderItems.map(item =>
-              `${item.quantity}x ${item.name}`
-            ).join(', ');
-           
-            Alert.alert(
-              "🎉 Order Complete!",
-              `Your order of ${itemNames} is complete, please come pick up!`,
-              [{ text: "OK" }]
-            );
-          } else if (payload.new.status === 'declined') {
-            Alert.alert(
-              "😔 Order Declined",
-              "We're sorry, your order was declined by the kitchen.",
-              [{ text: "OK" }]
-            );
+          console.log('📦 Inventory updated:', payload.new.name, payload.new.is_in_stock);
+          
+          // Update local inventory status
+          setInventoryStatus(prev => ({
+            ...prev,
+            [payload.new.name]: payload.new.is_in_stock
+          }));
+
+          // If item is now out of stock and in cart, show warning
+          if (!payload.new.is_in_stock) {
+            const itemInCart = cart.find(item => item.name === payload.new.name);
+            if (itemInCart) {
+              Alert.alert(
+                "Item Unavailable",
+                `${payload.new.name} is now out of stock. Please remove it from your cart to continue.`,
+                [{ text: "OK" }]
+              );
+            }
           }
         }
       )
@@ -1150,7 +1492,7 @@ const MenuScreen = ({ navigation }) => {
     return () => {
       channel.unsubscribe();
     };
-  }, []);
+  }, [cart]);
 
   const checkKitchenStatus = async () => {
     setIsLoading(true);
@@ -1190,6 +1532,23 @@ const MenuScreen = ({ navigation }) => {
       return;
     }
 
+    // Check for out of stock items in cart
+    const outOfStockItems = cart.filter(item => inventoryStatus[item.name] === false);
+    if (outOfStockItems.length > 0) {
+      Alert.alert(
+        "Items Unavailable ⚠️",
+        `The following items are out of stock:\n\n${outOfStockItems.map(item => item.name).join('\n')}\n\nPlease remove them from your cart to continue.`,
+        [{ 
+          text: "Update Cart", 
+          onPress: () => {
+            // Refresh inventory status
+            loadInventoryStatus();
+          }
+        }]
+      );
+      return;
+    }
+
     if (!customerName.trim()) {
       setShowNameModal(true);
       return;
@@ -1210,13 +1569,14 @@ const MenuScreen = ({ navigation }) => {
         throw new Error('Failed to save order history');
       }
 
-      // Send to Supabase
+      // Send to Supabase (includes inventory check)
       const supabaseResult = await OrderService.sendOrderToSupabase(order);
      
       if (supabaseResult.success) {
         // Set recent order for feedback
         setRecentOrder({
-          id: supabaseResult.data?.[0]?.id || Date.now(),
+          id: supabaseResult.data?.id || Date.now(),
+          supabase_id: supabaseResult.data?.id,
           customerName: customerName.trim(),
           items: cart,
           total: total
@@ -1247,6 +1607,18 @@ const MenuScreen = ({ navigation }) => {
             "Kitchen Just Closed",
             "The kitchen closed while processing your order. Please try again later."
           );
+        } else if (supabaseResult.error?.message === 'ITEMS_OUT_OF_STOCK') {
+          Alert.alert(
+            "Items Unavailable ⚠️",
+            supabaseResult.error.details.message || "Some items are now out of stock. Please update your cart.",
+            [{ 
+              text: "Update Cart", 
+              onPress: () => {
+                // Refresh inventory status
+                loadInventoryStatus();
+              }
+            }]
+          );
         } else {
           throw new Error('Failed to send order');
         }
@@ -1270,6 +1642,14 @@ const MenuScreen = ({ navigation }) => {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={refreshAllData}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
+            />
+          }
         >
           {/* Header */}
           <View style={styles.header}>
@@ -1280,7 +1660,11 @@ const MenuScreen = ({ navigation }) => {
               <Icon name="arrow-back" size={24} color={Colors.white} />
             </TouchableOpacity>
             <Text style={styles.title}>GitGrub Menu</Text>
-            <View style={styles.headerRight} />
+            <View style={styles.headerRight}>
+              <TouchableOpacity onPress={refreshAllData}>
+                <Icon name="refresh" size={24} color={Colors.white} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Kitchen Status */}
@@ -1289,6 +1673,17 @@ const MenuScreen = ({ navigation }) => {
               <Icon name="warning" size={20} color={Colors.white} />
               <Text style={styles.kitchenClosedText}>
                 Kitchen Closed - Orders saved for when kitchen reopens
+              </Text>
+            </View>
+          )}
+
+          {/* Inventory Status Banner */}
+          {Object.keys(inventoryStatus).length > 0 && 
+           Object.values(inventoryStatus).filter(status => !status).length > 0 && (
+            <View style={styles.inventoryStatusBanner}>
+              <Icon name="inventory" size={20} color={Colors.warning} />
+              <Text style={styles.inventoryStatusText}>
+                {Object.values(inventoryStatus).filter(status => !status).length} item(s) out of stock
               </Text>
             </View>
           )}
@@ -1361,70 +1756,24 @@ const MenuScreen = ({ navigation }) => {
                   key={item.id}
                   item={item}
                   onAddToCart={addToCart}
+                  isOutOfStock={inventoryStatus[item.name] === false}
                 />
               ))
             )}
           </View>
         </ScrollView>
 
-        {/* Cart Section */}
-        <View style={styles.cartContainer}>
-          <View style={styles.cartHeader}>
-            <Text style={styles.cartTitle}>
-              Your Order ({itemCount} {itemCount === 1 ? 'item' : 'items'})
-            </Text>
-            {cart.length > 0 && (
-              <TouchableOpacity onPress={clearCart}>
-                <Text style={styles.clearCartText}>Clear All</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {cart.length > 0 ? (
-            <>
-              <ScrollView style={styles.cartItemsScroll} showsVerticalScrollIndicator={false}>
-                {cart.map((item) => (
-                  <CartItem
-                    key={item.cartId}
-                    item={item}
-                    onRemove={removeFromCart}
-                    onUpdateQuantity={updateQuantity}
-                  />
-                ))}
-              </ScrollView>
-
-              <View style={styles.cartFooter}>
-                <View style={styles.totalContainer}>
-                  <Text style={styles.totalLabel}>Total:</Text>
-                  <Text style={styles.totalAmount}>${total}</Text>
-                </View>
-
-                <TouchableOpacity
-                  style={[
-                    styles.checkoutButton,
-                    (!kitchenStatus || isCheckingOut) && styles.checkoutButtonDisabled
-                  ]}
-                  onPress={handleCheckout}
-                  disabled={!kitchenStatus || isCheckingOut}
-                >
-                  <Text style={styles.checkoutButtonText}>
-                    {isCheckingOut ? 'Processing...' :
-                     !kitchenStatus ? 'Kitchen Closed' :
-                     `Checkout - $${total}`}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <View style={styles.emptyCartContainer}>
-              <Icon name="shopping-cart" size={48} color={Colors.textSecondary} />
-              <Text style={styles.emptyCartText}>Your cart is empty</Text>
-              <Text style={styles.emptyCartSubtext}>
-                Add items from the menu above
-              </Text>
-            </View>
-          )}
-        </View>
+        {/* Checkout Section */}
+        <CheckoutSection
+          cart={cart}
+          total={total}
+          itemCount={itemCount}
+          kitchenStatus={kitchenStatus}
+          onCheckout={handleCheckout}
+          isCheckingOut={isCheckingOut}
+          inventoryStatus={inventoryStatus}
+          clearCart={clearCart}
+        />
       </SafeAreaView>
 
       {/* Name Modal */}
@@ -1494,15 +1843,19 @@ const OrderStatusScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdate, setLastUpdate] = useState('');
+  const [subscription, setSubscription] = useState(null);
 
   const loadOrders = async () => {
     try {
       setRefreshing(true);
       const history = await OrderService.getOrderHistory();
-      const activeOrders = history.filter(order =>
-        ['pending', 'preparing', 'ready', 'completed'].includes(order.status)
-      );
-      setOrders(activeOrders.slice(0, 5));
+      // Show all orders (not just active ones) for status tracking
+      const sortedOrders = history.sort((a, b) => {
+        const timeA = a.timestamp || 0;
+        const timeB = b.timestamp || 0;
+        return timeB - timeA;
+      });
+      setOrders(sortedOrders.slice(0, 10));
       setLastUpdate(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Error loading orders:', error);
@@ -1515,50 +1868,71 @@ const OrderStatusScreen = ({ navigation }) => {
   useEffect(() => {
     loadOrders();
 
-    // Subscribe to real-time updates
+    // Subscribe to real-time updates for orders
     const channel = supabase
-      .channel('customer-orders')
+      .channel('customer-order-status')
       .on('postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'orders'
         },
         async (payload) => {
-          if (payload.new.status === 'completed') {
-            await OrderService.updateOrderStatus(payload.old.id, 'completed');
-           
-            const orderItems = payload.new.order_items || [];
-            const itemNames = orderItems.map(item =>
-              `${item.quantity}x ${item.name}`
-            ).join(', ');
-           
-            Alert.alert(
-              "🎉 Order Ready!",
-              `Your order of ${itemNames} is complete, please come pick up!`,
-              [{ text: "OK" }]
-            );
-          } else if (payload.new.status === 'declined') {
-            await OrderService.updateOrderStatus(payload.old.id, 'declined');
-           
-            Alert.alert(
-              "😔 Order Declined",
-              "We're sorry, your order was declined by the kitchen.",
-              [{ text: "OK" }]
-            );
-          } else if (payload.new.status === 'preparing') {
-            await OrderService.updateOrderStatus(payload.old.id, 'preparing');
-          } else if (payload.new.status === 'ready') {
-            await OrderService.updateOrderStatus(payload.old.id, 'ready');
+          console.log('📱 Real-time order update:', payload);
+          
+          if (payload.eventType === 'UPDATE') {
+            // Update the order in local storage
+            await OrderService.syncOrderFromSupabase(payload.new);
+            
+            // Show notification based on status change
+            if (payload.new.status === 'ready' && payload.old.status !== 'ready') {
+              const orderItems = payload.new.order_items || [];
+              const itemNames = orderItems.map(item =>
+                `${item.quantity}x ${item.name}`
+              ).join(', ');
+             
+              Alert.alert(
+                "🎉 Order Ready!",
+                `Your order is now ready for pickup!\n\n${itemNames}`,
+                [{ text: "OK" }]
+              );
+            } else if (payload.new.status === 'declined' && payload.old.status !== 'declined') {
+              Alert.alert(
+                "😔 Order Declined",
+                "We're sorry, your order was declined by the kitchen.",
+                [{ text: "OK" }]
+              );
+            } else if (payload.new.status === 'preparing' && payload.old.status !== 'preparing') {
+              Alert.alert(
+                "👨‍🍳 Order Being Prepared",
+                "Your order is now being prepared in the kitchen!",
+                [{ text: "OK" }]
+              );
+            } else if (payload.new.status === 'completed' && payload.old.status !== 'completed') {
+              Alert.alert(
+                "✅ Order Completed",
+                "Your order has been completed. Thank you!",
+                [{ text: "OK" }]
+              );
+            }
+            
+            // Refresh the orders list
+            loadOrders();
+          } else if (payload.eventType === 'INSERT') {
+            // New order added, sync it
+            await OrderService.syncOrderFromSupabase(payload.new);
+            loadOrders();
           }
-         
-          loadOrders();
         }
       )
       .subscribe();
 
+    setSubscription(channel);
+
     return () => {
-      channel.unsubscribe();
+      if (subscription) {
+        subscription.unsubscribe();
+      }
     };
   }, []);
 
@@ -1593,6 +1967,19 @@ const OrderStatusScreen = ({ navigation }) => {
       declined: "❌ Order declined by kitchen",
     };
     return messages[status] || "Order received";
+  };
+
+  const getCardBackground = (status) => {
+    if (status === 'ready') {
+      return styles.readyOrderCard;
+    } else if (status === 'declined') {
+      return styles.declinedOrderCard;
+    } else if (status === 'completed') {
+      return styles.completedOrderCard;
+    } else if (status === 'preparing') {
+      return styles.preparingOrderCard;
+    }
+    return styles.orderCard;
   };
 
   if (isLoading) {
@@ -1634,13 +2021,13 @@ const OrderStatusScreen = ({ navigation }) => {
           {orders.length > 0 ? (
             orders.map((order) => (
               <View key={order.id} style={[
-                styles.orderCard,
+                getCardBackground(order.status),
                 { borderLeftColor: getStatusColor(order.status) }
               ]}>
                 <View style={styles.orderHeader}>
                   <View style={styles.orderIdContainer}>
                     <Icon name={getStatusIcon(order.status)} size={24} color={getStatusColor(order.status)} />
-                    <Text style={styles.orderId}>Order #{order.id}</Text>
+                    <Text style={styles.orderId}>Order #{order.id.toString().slice(-6)}</Text>
                   </View>
                   <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
                     {order.status.toUpperCase()}
@@ -1651,15 +2038,15 @@ const OrderStatusScreen = ({ navigation }) => {
                   {getStatusMessage(order.status)}
                 </Text>
                
-                <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                <Text style={styles.orderCustomer}>Customer: {order.customerName}</Text>
                 <Text style={styles.orderDate}>{order.date}</Text>
                
                 <View style={styles.itemsSection}>
                   <Text style={styles.itemsLabel}>Items:</Text>
-                  {order.items.map((item, index) => (
+                  {Array.isArray(order.items) && order.items.map((item, index) => (
                     <View key={index} style={styles.orderItemContainer}>
                       <Text style={styles.orderItem}>
-                        {item.quantity}x {item.name} - ${item.price.toFixed(2)}
+                        {item.quantity}x {item.name} - ${item.price?.toFixed(2) || '0.00'}
                       </Text>
                       {item.wingFlavor && (
                         <Text style={styles.orderItemFlavor}>
@@ -1703,7 +2090,7 @@ const OrderStatusScreen = ({ navigation }) => {
           ) : (
             <View style={styles.emptyState}>
               <Icon name="receipt" size={64} color={Colors.textSecondary} />
-              <Text style={styles.emptyStateText}>No active orders</Text>
+              <Text style={styles.emptyStateText}>No orders found</Text>
               <Text style={styles.emptyStateSubtext}>
                 Your order status will appear here once you place an order
               </Text>
@@ -1716,7 +2103,7 @@ const OrderStatusScreen = ({ navigation }) => {
             </View>
           )}
 
-          {/* Completed Orders Section */}
+          {/* Order Status Guide */}
           <View style={styles.completedSection}>
             <Text style={styles.completedTitle}>Order Status Guide</Text>
             <View style={styles.statusGuide}>
@@ -1857,10 +2244,10 @@ const OrderHistoryScreen = ({ navigation }) => {
                 </View>
 
                 <View style={styles.itemsSection}>
-                  {order.items.map((item, index) => (
+                  {Array.isArray(order.items) && order.items.map((item, index) => (
                     <View key={index} style={styles.orderItemContainer}>
                       <Text style={styles.orderItem}>
-                        {item.quantity}x {item.name} - ${item.price.toFixed(2)}
+                        {item.quantity}x {item.name} - ${item.price?.toFixed(2) || '0.00'}
                       </Text>
                       {item.wingFlavor && (
                         <Text style={styles.orderItemFlavor}>
@@ -2273,7 +2660,7 @@ const App = () => {
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="Login" // Login is now the first screen
+        initialRouteName="Login"
         screenOptions={({ navigation }) => ({
           headerStyle: {
             backgroundColor: Colors.background,
@@ -2468,10 +2855,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.black,
     marginLeft: 10,
-  },
-  menuItemContainer: {
-    marginBottom: 20,
-    width: '100%',
   },
   menuSection: {
     marginBottom: 25,
@@ -2685,6 +3068,66 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 3,
+  },
+  readyOrderCard: {
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.success,
+    borderWidth: 2,
+    borderColor: Colors.success,
+    shadowColor: Colors.success,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  declinedOrderCard: {
+    backgroundColor: 'rgba(255, 82, 82, 0.1)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.error,
+    borderWidth: 2,
+    borderColor: Colors.error,
+    shadowColor: Colors.error,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  completedOrderCard: {
+    backgroundColor: 'rgba(151, 93, 254, 0.1)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.primary,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  preparingOrderCard: {
+    backgroundColor: 'rgba(31, 64, 104, 0.1)',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.secondary,
+    borderWidth: 2,
+    borderColor: Colors.secondary,
+    shadowColor: Colors.secondary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   orderHeader: {
     flexDirection: 'row',
@@ -3435,6 +3878,92 @@ const styles = StyleSheet.create({
   flavorTextSelected: {
     fontWeight: 'bold',
     color: Colors.primary,
+  },
+  
+  // New inventory-related styles
+  outOfStockItem: {
+    opacity: 0.6,
+  },
+  outOfStockText: {
+    color: Colors.outOfStock,
+    textDecorationLine: 'line-through',
+  },
+  outOfStockBadge: {
+    fontSize: 12,
+    color: Colors.error,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
+  addButtonDisabled: {
+    backgroundColor: Colors.outOfStock,
+  },
+  addButtonTextDisabled: {
+    color: Colors.white,
+  },
+  cartItemOutOfStock: {
+    backgroundColor: 'rgba(255, 82, 82, 0.1)',
+  },
+  cartItemNameOutOfStock: {
+    color: Colors.outOfStock,
+  },
+  cartItemPriceOutOfStock: {
+    color: Colors.outOfStock,
+    textDecorationLine: 'line-through',
+  },
+  quantityButtonDisabled: {
+    backgroundColor: Colors.textSecondary,
+  },
+  quantityButtonTextDisabled: {
+    color: Colors.textSecondary,
+  },
+  quantityTextOutOfStock: {
+    color: Colors.outOfStock,
+  },
+  outOfStockWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 165, 0, 0.1)',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+    gap: 6,
+  },
+  outOfStockWarningText: {
+    fontSize: 12,
+    color: Colors.warning,
+    flex: 1,
+  },
+  outOfStockBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 82, 82, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginHorizontal: 15,
+    marginBottom: 15,
+    gap: 10,
+  },
+  outOfStockBannerText: {
+    color: Colors.outOfStock,
+    fontWeight: '600',
+    fontSize: 14,
+    flex: 1,
+  },
+  inventoryStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 165, 0, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    marginHorizontal: 15,
+    marginBottom: 15,
+    gap: 10,
+  },
+  inventoryStatusText: {
+    color: Colors.warning,
+    fontWeight: '600',
+    fontSize: 14,
+    flex: 1,
   },
 });
 
