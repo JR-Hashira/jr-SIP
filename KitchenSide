@@ -1,4 +1,4 @@
-// Kitchen Display - Complete Fixed Version
+// Kitchen Display - Complete with Inventory Management
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   SafeAreaView,
@@ -13,6 +13,7 @@ import {
   Modal,
   TextInput,
   FlatList,
+  ScrollView,
   Dimensions,
   Switch,
   AppState,
@@ -58,7 +59,8 @@ const Colors = {
   disconnected: "#ff4444",
   connecting: "#FFA500",
   notification: "#2196F3",
-  pulse: "rgba(0, 255, 0, 0.3)",
+  inStock: "#4CAF50",
+  outOfStock: "#FF5252",
 };
 
 // Status constants
@@ -69,6 +71,88 @@ const ORDER_STATUS = {
   COMPLETED: 'completed',
   DECLINED: 'declined',
   ARCHIVED: 'archived'
+};
+
+// ============================================
+// INVENTORY SERVICE
+// ============================================
+const InventoryService = {
+  async getInventory() {
+    try {
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .order('category')
+        .order('name');
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Inventory fetch error:', error);
+      return [];
+    }
+  },
+
+  async updateStockStatus(itemId, isInStock) {
+    try {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ 
+          is_in_stock: isInStock,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', itemId);
+
+      if (error) throw error;
+      return { success: true };
+    } catch (error) {
+      console.error('Update stock error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async updatePrice(itemId, newPrice) {
+    try {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ 
+          price: parseFloat(newPrice),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', itemId);
+
+      if (error) throw error;
+      return { success: true };
+    } catch (error) {
+      console.error('Update price error:', error);
+      return { success: false, error };
+    }
+  },
+
+  async checkItemsAvailability(items) {
+    try {
+      const itemNames = items.map(item => item.name);
+      const { data: inventory, error } = await supabase
+        .from('inventory')
+        .select('name, is_in_stock')
+        .in('name', itemNames);
+
+      if (error) throw error;
+
+      const outOfStockItems = items.filter(item => {
+        const invItem = inventory.find(inv => inv.name === item.name);
+        return invItem && !invItem.is_in_stock;
+      });
+
+      return {
+        allAvailable: outOfStockItems.length === 0,
+        outOfStockItems: outOfStockItems.map(item => item.name)
+      };
+    } catch (error) {
+      console.error('Check availability error:', error);
+      return { allAvailable: true, outOfStockItems: [] };
+    }
+  }
 };
 
 // ============================================
@@ -125,6 +209,7 @@ const LiveNotification = ({ message, type = 'info', visible, onHide }) => {
 
   const bgColor = type === 'success' ? Colors.success : 
                  type === 'error' ? Colors.error : 
+                 type === 'warning' ? Colors.warning :
                  Colors.notification;
 
   return (
@@ -140,7 +225,8 @@ const LiveNotification = ({ message, type = 'info', visible, onHide }) => {
     >
       <Icon 
         name={type === 'success' ? 'check-circle' : 
-              type === 'error' ? 'error' : 'notifications-active'} 
+              type === 'error' ? 'error' : 
+              type === 'warning' ? 'warning' : 'notifications-active'} 
         size={20} 
         color={Colors.text} 
       />
@@ -154,139 +240,8 @@ const LiveNotification = ({ message, type = 'info', visible, onHide }) => {
   );
 };
 
-// Enhanced Connection Status Component
-const ConnectionStatus = ({ isConnected, lastUpdate }) => {
-  const getConnectionText = () => {
-    if (isConnected === true) {
-      return "LIVE • REAL-TIME";
-    } else if (isConnected === false) {
-      return "OFFLINE • MANUAL";
-    } else {
-      return "CONNECTING...";
-    }
-  };
-
-  const getIconName = () => {
-    if (isConnected === true) return "wifi";
-    if (isConnected === false) return "wifi-off";
-    return "wifi-find";
-  };
-
-  return (
-    <View style={styles.connectionStatus}>
-      <View style={styles.connectionIndicator}>
-        <View style={[
-          styles.connectionDot,
-          { 
-            backgroundColor: isConnected === true ? Colors.connected : 
-                           isConnected === false ? Colors.disconnected : 
-                           Colors.connecting,
-          }
-        ]}>
-          <Icon 
-            name={getIconName()} 
-            size={12} 
-            color={Colors.background} 
-          />
-        </View>
-        <Text style={styles.connectionText}>{getConnectionText()}</Text>
-      </View>
-      {lastUpdate && (
-        <Text style={styles.lastUpdateText}>
-          Updated: {new Date(lastUpdate).toLocaleTimeString([], { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            second: '2-digit' 
-          })}
-        </Text>
-      )}
-    </View>
-  );
-};
-
-// Enhanced Kitchen Status Component
-const KitchenStatus = ({ 
-  isOpen, 
-  onToggle, 
-  activeOrdersCount, 
-  connectionStatus,
-  newOrderCount = 0 
-}) => {
-  const [showNewOrderBadge, setShowNewOrderBadge] = useState(false);
-
-  useEffect(() => {
-    if (newOrderCount > 0) {
-      setShowNewOrderBadge(true);
-      const timer = setTimeout(() => setShowNewOrderBadge(false), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [newOrderCount]);
-
-  return (
-    <View style={styles.kitchenStatusContainer}>
-      <View style={styles.statusRow}>
-        <View style={styles.statusInfo}>
-          <View style={styles.statusIndicator}>
-            <View style={[
-              styles.statusDot,
-              { backgroundColor: isOpen ? Colors.success : Colors.error }
-            ]} />
-            <Text style={styles.statusTitle}>
-              {isOpen ? "ACTIVE ORDERS" : "KITCHEN CLOSED"}
-            </Text>
-          </View>
-          <View style={styles.orderCountContainer}>
-            <Text style={styles.orderCount}>{activeOrdersCount}</Text>
-            {showNewOrderBadge && (
-              <View style={styles.newOrderBadge}>
-                <Text style={styles.newOrderBadgeText}>+{newOrderCount}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-        
-        <TouchableOpacity
-          style={[
-            styles.kitchenToggle,
-            { 
-              backgroundColor: isOpen ? Colors.error : Colors.success,
-            }
-          ]}
-          onPress={onToggle}
-          activeOpacity={0.8}
-        >
-          <Icon 
-            name={isOpen ? "close" : "restaurant"} 
-            size={18} 
-            color={Colors.text} 
-          />
-          <Text style={styles.kitchenToggleText}>
-            {isOpen ? "CLOSE KITCHEN" : "OPEN KITCHEN"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.bottomRow}>
-        {!isOpen && (
-          <View style={styles.closedWarning}>
-            <Icon name="warning" size={16} color={Colors.warning} />
-            <Text style={styles.closedWarningText}>
-              Kitchen is closed. No new orders will be accepted.
-            </Text>
-          </View>
-        )}
-        
-        <ConnectionStatus 
-          isConnected={connectionStatus.connected}
-          lastUpdate={connectionStatus.lastUpdate}
-        />
-      </View>
-    </View>
-  );
-};
-
-// Enhanced Order Card with Complete/Decline buttons
-const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
+// Enhanced Order Card with Inventory Status
+const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false, inventoryStatus = null }) => {
   const [highlight, setHighlight] = useState(isNew);
   const slideAnim = useRef(new Animated.Value(isNew ? -20 : 0)).current;
   const fadeAnim = useRef(new Animated.Value(isNew ? 0 : 1)).current;
@@ -345,6 +300,10 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
   const totalItems = orderItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
   const totalPrice = parseFloat(order.total_price || 0).toFixed(2);
 
+  // Check if any items are out of stock
+  const hasOutOfStockItems = inventoryStatus && 
+    orderItems.some(item => inventoryStatus.outOfStockItems?.includes(item.name));
+
   // Use deleted_at to determine if order is archived
   const isArchived = order.deleted_at !== null && order.deleted_at !== undefined;
   const isCompleted = order.status === ORDER_STATUS.COMPLETED;
@@ -358,8 +317,10 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
         isArchived && styles.archivedOrder,
         isDeclined && styles.declinedOrder,
         isCompleted && styles.completedOrder,
+        hasOutOfStockItems && styles.outOfStockOrder,
         { 
-          borderLeftColor: isArchived ? Colors.archived : 
+          borderLeftColor: hasOutOfStockItems ? Colors.outOfStock :
+                          isArchived ? Colors.archived : 
                           isCompleted ? Colors.success : 
                           isDeclined ? Colors.error : Colors.warning,
           opacity: fadeAnim,
@@ -381,10 +342,12 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
           styles.orderStatusBadge,
           isArchived && styles.archivedBadge,
           isCompleted && styles.completedBadge,
-          isDeclined && styles.declinedBadge
+          isDeclined && styles.declinedBadge,
+          hasOutOfStockItems && styles.outOfStockBadge
         ]}>
           <Icon 
             name={
+              hasOutOfStockItems ? 'warning' :
               isArchived ? 'archive' :
               isCompleted ? 'check-circle' :
               isDeclined ? 'cancel' :
@@ -394,7 +357,8 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
             color={Colors.text} 
           />
           <Text style={styles.orderStatusText}>
-            {isArchived ? 'ARCHIVED' : 
+            {hasOutOfStockItems ? 'OUT OF STOCK' :
+             isArchived ? 'ARCHIVED' : 
              isCompleted ? 'COMPLETED' : 
              isDeclined ? 'DECLINED' : 
              order.status.toUpperCase()}
@@ -409,6 +373,16 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
         <Text style={styles.orderTime}>{formatTime(order.created_at)}</Text>
       </View>
 
+      {/* Out of Stock Warning */}
+      {hasOutOfStockItems && (
+        <View style={styles.outOfStockWarning}>
+          <Icon name="warning" size={16} color={Colors.warning} />
+          <Text style={styles.outOfStockWarningText}>
+            Some items in this order are out of stock
+          </Text>
+        </View>
+      )}
+
       {/* Order Summary */}
       <View style={styles.orderSummary}>
         <View style={styles.summaryItem}>
@@ -421,17 +395,35 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
         </View>
       </View>
 
-      {/* Quick Preview of Items */}
-      <View style={styles.itemsPreview}>
-        {orderItems.slice(0, 2).map((item, index) => (
-          <Text key={index} style={styles.previewItem}>
-            • {item.quantity || 1}x {item.name}
-            {item.wingFlavor && ` (${item.wingFlavor})`}
-          </Text>
-        ))}
-        {orderItems.length > 2 && (
-          <Text style={styles.moreItems}>+{orderItems.length - 2} more items</Text>
-        )}
+      {/* Items List with Stock Status */}
+      <View style={styles.itemsList}>
+        {orderItems.map((item, index) => {
+          const isOutOfStock = inventoryStatus?.outOfStockItems?.includes(item.name);
+          return (
+            <View key={index} style={[
+              styles.itemRow,
+              isOutOfStock && styles.outOfStockItem
+            ]}>
+              <View style={styles.itemInfo}>
+                <Text style={[
+                  styles.itemName,
+                  isOutOfStock && styles.outOfStockItemName
+                ]}>
+                  • {item.quantity || 1}x {item.name}
+                </Text>
+                {item.wingFlavor && (
+                  <Text style={styles.itemFlavor}>({item.wingFlavor})</Text>
+                )}
+              </View>
+              {isOutOfStock && (
+                <View style={styles.stockIndicator}>
+                  <Icon name="close" size={12} color={Colors.error} />
+                  <Text style={styles.stockIndicatorText}>Out of stock</Text>
+                </View>
+              )}
+            </View>
+          );
+        })}
       </View>
 
       {/* Reason for Decline (if declined) */}
@@ -443,7 +435,7 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
       )}
 
       {/* Action Buttons - Only for pending AND not archived orders */}
-      {order.status === ORDER_STATUS.PENDING && !isArchived && (
+      {order.status === ORDER_STATUS.PENDING && !isArchived && !hasOutOfStockItems && (
         <View style={styles.orderActions}>
           <TouchableOpacity
             style={[styles.actionButton, styles.completeButton]}
@@ -459,6 +451,22 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
           >
             <Icon name="close" size={16} color={Colors.text} />
             <Text style={styles.actionButtonText}>Decline</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Special handling for orders with out of stock items */}
+      {hasOutOfStockItems && (
+        <View style={styles.outOfStockActions}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.outOfStockActionButton]}
+            onPress={() => Alert.alert(
+              "Out of Stock Items",
+              "Please update inventory before completing this order.\n\nGo to Inventory screen to restock items."
+            )}
+          >
+            <Icon name="inventory" size={16} color={Colors.text} />
+            <Text style={styles.actionButtonText}>Check Inventory</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -483,74 +491,361 @@ const OrderCard = ({ order, onUpdateStatus, onDecline, isNew = false }) => {
 };
 
 // ============================================
-// DATABASE TEST FUNCTION
+// INVENTORY SCREEN
 // ============================================
+const InventoryScreen = ({ navigation }) => {
+  const [inventory, setInventory] = useState([]);
+  const [filteredInventory, setFilteredInventory] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [showPriceModal, setShowPriceModal] = useState(false);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [newPrice, setNewPrice] = useState('');
 
-const testDatabaseConnection = async () => {
-  console.log('🔍 Testing database connection...');
-  
-  const tests = {
-    canQueryKitchens: false,
-    canUpdateKitchens: false,
-    canQueryOrders: false,
-    canUpdateOrders: false
+  const categories = [
+    { key: 'all', label: 'All Items' },
+    { key: 'pizza', label: 'Pizza' },
+    { key: 'sandwiches', label: 'Sandwiches' },
+    { key: 'wings', label: 'Wings' },
+    { key: 'pretzels', label: 'Pretzels' },
+  ];
+
+  const loadInventory = useCallback(async () => {
+    try {
+      console.log('📦 Loading inventory...');
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .order('category', { ascending: true })
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+
+      console.log('✅ Inventory loaded:', data?.length || 0, 'items');
+      setInventory(data || []);
+      filterInventory(data || [], searchQuery, selectedCategory);
+    } catch (error) {
+      console.error('❌ Error loading inventory:', error);
+      Alert.alert('Error', 'Failed to load inventory');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [searchQuery, selectedCategory]);
+
+  const filterInventory = useCallback((items, query, category) => {
+    let filtered = items;
+    
+    if (query) {
+      filtered = filtered.filter(item =>
+        item.name.toLowerCase().includes(query.toLowerCase())
+      );
+    }
+    
+    if (category !== 'all') {
+      filtered = filtered.filter(item => item.category === category);
+    }
+    
+    setFilteredInventory(filtered);
+  }, []);
+
+  useEffect(() => {
+    loadInventory();
+  }, []);
+
+  useEffect(() => {
+    filterInventory(inventory, searchQuery, selectedCategory);
+  }, [searchQuery, selectedCategory, inventory]);
+
+  const toggleStockStatus = async (itemId, currentStatus) => {
+    try {
+      const newStatus = !currentStatus;
+      const result = await InventoryService.updateStockStatus(itemId, newStatus);
+
+      if (!result.success) throw result.error;
+
+      // Update local state
+      setInventory(prev => prev.map(item =>
+        item.id === itemId ? { ...item, is_in_stock: newStatus } : item
+      ));
+
+      Alert.alert(
+        newStatus ? 'Back in Stock!' : 'Out of Stock',
+        newStatus 
+          ? 'Item is now available for ordering'
+          : 'Item will not be available for new orders'
+      );
+    } catch (error) {
+      console.error('❌ Error updating stock:', error);
+      Alert.alert('Error', 'Failed to update stock status');
+    }
   };
-  
-  try {
-    // Test 1: Can we query Kitchens table?
-    const { data: kitchens, error: kitchenError } = await supabase
-      .from('Kitchens')
-      .select('*')
-      .eq('id', KITCHEN_ID);
-    
-    tests.canQueryKitchens = !kitchenError && kitchens && kitchens.length > 0;
-    console.log('✅ Kitchens query:', tests.canQueryKitchens ? 'SUCCESS' : 'FAILED', kitchens);
-    
-    // Test 2: Can we update Kitchens table?
-    if (tests.canQueryKitchens) {
-      const { error: updateError } = await supabase
-        .from('Kitchens')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', KITCHEN_ID);
-      
-      tests.canUpdateKitchens = !updateError;
-      console.log('✅ Kitchens update:', tests.canUpdateKitchens ? 'SUCCESS' : 'FAILED');
+
+  const updateItemPrice = async () => {
+    if (!selectedItem || !newPrice || isNaN(parseFloat(newPrice))) {
+      Alert.alert('Invalid Price', 'Please enter a valid price');
+      return;
     }
-    
-    // Test 3: Can we query Orders table?
-    const { data: orders, error: ordersError } = await supabase
-      .from('orders')
-      .select('id, status, deleted_at')
-      .eq('kitchen_id', KITCHEN_ID)
-      .limit(5);
-    
-    tests.canQueryOrders = !ordersError;
-    console.log('✅ Orders query:', tests.canQueryOrders ? 'SUCCESS' : 'FAILED');
-    
-    // Test 4: Can we update Orders table?
-    if (tests.canQueryOrders && orders && orders.length > 0) {
-      const testOrder = orders[0];
-      const { error: orderUpdateError } = await supabase
-        .from('orders')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', testOrder.id);
-      
-      tests.canUpdateOrders = !orderUpdateError;
-      console.log('✅ Orders update:', tests.canUpdateOrders ? 'SUCCESS' : 'FAILED');
+
+    try {
+      const price = parseFloat(newPrice);
+      const result = await InventoryService.updatePrice(selectedItem.id, price);
+
+      if (!result.success) throw result.error;
+
+      // Update local state
+      setInventory(prev => prev.map(item =>
+        item.id === selectedItem.id ? { ...item, price: price } : item
+      ));
+
+      Alert.alert('Price Updated', `Price updated to $${price.toFixed(2)}`);
+      setShowPriceModal(false);
+      setNewPrice('');
+      setSelectedItem(null);
+    } catch (error) {
+      console.error('❌ Error updating price:', error);
+      Alert.alert('Error', 'Failed to update price');
     }
-    
-    return tests;
-    
-  } catch (error) {
-    console.error('❌ Database test error:', error);
-    return tests;
+  };
+
+  const openPriceModal = (item) => {
+    setSelectedItem(item);
+    setNewPrice(item.price.toString());
+    setShowPriceModal(true);
+  };
+
+  const renderInventoryItem = (item) => (
+    <View key={item.id} style={styles.inventoryCard}>
+      <View style={styles.itemHeader}>
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName}>{item.name}</Text>
+          <Text style={styles.itemCategory}>{item.category.toUpperCase()}</Text>
+        </View>
+        <View style={[
+          styles.stockBadge,
+          { backgroundColor: item.is_in_stock ? Colors.inStock : Colors.outOfStock }
+        ]}>
+          <Icon 
+            name={item.is_in_stock ? 'check' : 'close'} 
+            size={16} 
+            color={Colors.text} 
+          />
+          <Text style={styles.stockText}>
+            {item.is_in_stock ? 'IN STOCK' : 'OUT OF STOCK'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.itemDetails}>
+        <View style={styles.priceContainer}>
+          <Icon name="attach-money" size={20} color={Colors.textSecondary} />
+          <Text style={styles.priceText}>${item.price.toFixed(2)}</Text>
+          <TouchableOpacity
+            style={styles.editPriceButton}
+            onPress={() => openPriceModal(item)}
+          >
+            <Icon name="edit" size={16} color={Colors.warning} />
+            <Text style={styles.editPriceText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            style={styles.stockToggle}
+            onPress={() => toggleStockStatus(item.id, item.is_in_stock)}
+          >
+            <Switch
+              value={item.is_in_stock}
+              onValueChange={() => toggleStockStatus(item.id, item.is_in_stock)}
+              trackColor={{ false: '#767577', true: Colors.inStock }}
+              thumbColor={item.is_in_stock ? Colors.text : '#f4f3f4'}
+            />
+            <Text style={styles.toggleLabel}>
+              {item.is_in_stock ? 'In Stock' : 'Out of Stock'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <Text style={styles.lastUpdated}>
+        Updated: {new Date(item.updated_at).toLocaleDateString()}
+      </Text>
+    </View>
+  );
+
+  const renderCategories = () => (
+    <ScrollView 
+      horizontal 
+      showsHorizontalScrollIndicator={false}
+      style={styles.categoryScroll}
+    >
+      {categories.map(category => (
+        <TouchableOpacity
+          key={category.key}
+          style={[
+            styles.categoryButton,
+            selectedCategory === category.key && styles.categoryButtonActive
+          ]}
+          onPress={() => setSelectedCategory(category.key)}
+        >
+          <Text style={[
+            styles.categoryButtonText,
+            selectedCategory === category.key && styles.categoryButtonTextActive
+          ]}>
+            {category.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.loadingText}>Loading Inventory...</Text>
+      </View>
+    );
   }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Icon name="arrow-back" size={24} color={Colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.title}>Inventory Management</Text>
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={loadInventory}
+        >
+          <Icon name="refresh" size={24} color={Colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <Icon name="search" size={20} color={Colors.textSecondary} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search inventory..."
+          placeholderTextColor={Colors.textSecondary}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery ? (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Icon name="close" size={20} color={Colors.textSecondary} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Categories */}
+      {renderCategories()}
+
+      {/* Inventory Summary */}
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryItem}>
+          <Text style={styles.summaryNumber}>{inventory.length}</Text>
+          <Text style={styles.summaryLabel}>Total Items</Text>
+        </View>
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryNumber, { color: Colors.inStock }]}>
+            {inventory.filter(item => item.is_in_stock).length}
+          </Text>
+          <Text style={styles.summaryLabel}>In Stock</Text>
+        </View>
+        <View style={styles.summaryItem}>
+          <Text style={[styles.summaryNumber, { color: Colors.outOfStock }]}>
+            {inventory.filter(item => !item.is_in_stock).length}
+          </Text>
+          <Text style={styles.summaryLabel}>Out of Stock</Text>
+        </View>
+      </View>
+
+      {/* Inventory List */}
+      <FlatList
+        data={filteredInventory}
+        renderItem={({ item }) => renderInventoryItem(item)}
+        keyExtractor={item => item.id}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={loadInventory}
+            colors={[Colors.primary]}
+          />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Icon name="inventory" size={64} color={Colors.textSecondary} />
+            <Text style={styles.emptyStateText}>
+              {searchQuery || selectedCategory !== 'all' 
+                ? 'No matching items found' 
+                : 'No inventory items'}
+            </Text>
+          </View>
+        }
+      />
+
+      {/* Price Update Modal */}
+      {showPriceModal && selectedItem && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Update Price</Text>
+            <Text style={styles.modalSubtitle}>{selectedItem.name}</Text>
+            
+            <View style={styles.priceInputContainer}>
+              <Text style={styles.priceLabel}>New Price:</Text>
+              <View style={styles.priceInputWrapper}>
+                <Text style={styles.currencySymbol}>$</Text>
+                <TextInput
+                  style={styles.priceInput}
+                  value={newPrice}
+                  onChangeText={setNewPrice}
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor="#999"
+                />
+              </View>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={updateItemPrice}
+              >
+                <Text style={styles.modalButtonText}>Save Price</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => {
+                  setShowPriceModal(false);
+                  setSelectedItem(null);
+                  setNewPrice('');
+                }}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+    </SafeAreaView>
+  );
 };
 
 // ============================================
 // MAIN KITCHEN SCREEN
 // ============================================
-const KitchenScreen = () => {
+const KitchenScreen = ({ navigation }) => {
   // State Management
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
@@ -563,6 +858,7 @@ const KitchenScreen = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [newOrdersCount, setNewOrdersCount] = useState(0);
+  const [inventoryStatus, setInventoryStatus] = useState({});
   
   // Live Update States
   const [liveNotification, setLiveNotification] = useState({
@@ -582,6 +878,7 @@ const KitchenScreen = () => {
   // Refs
   const ordersChannel = useRef(null);
   const kitchenChannel = useRef(null);
+  const inventoryChannel = useRef(null);
   const appState = useRef(AppState.currentState);
   const reconnectTimeout = useRef(null);
   const lastOrderCount = useRef(0);
@@ -708,6 +1005,9 @@ const KitchenScreen = () => {
     }
     if (kitchenChannel.current) {
       supabase.removeChannel(kitchenChannel.current);
+    }
+    if (inventoryChannel.current) {
+      supabase.removeChannel(inventoryChannel.current);
     }
     
     // Clear any existing reconnect timeout
@@ -856,6 +1156,32 @@ const KitchenScreen = () => {
           }
         )
         .subscribe();
+
+      // Setup Inventory Channel
+      inventoryChannel.current = supabase
+        .channel('inventory-realtime')
+        .on('postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'inventory'
+          },
+          (payload) => {
+            console.log('📦 Real-time inventory update:', payload.eventType);
+            updateConnectionStatus(true);
+            
+            if (payload.eventType === 'UPDATE') {
+              showLiveNotification(
+                `Inventory updated: ${payload.new.name} is now ${payload.new.is_in_stock ? 'IN STOCK' : 'OUT OF STOCK'}`,
+                payload.new.is_in_stock ? 'success' : 'warning'
+              );
+            }
+            
+            // Update inventory status for orders
+            updateInventoryStatus();
+          }
+        )
+        .subscribe();
       
     } catch (error) {
       console.error('Error setting up real-time connections:', error);
@@ -938,6 +1264,50 @@ const KitchenScreen = () => {
     }
   }, []);
 
+  const updateInventoryStatus = useCallback(async () => {
+    try {
+      // Get current inventory status
+      const { data: inventory, error } = await supabase
+        .from('inventory')
+        .select('name, is_in_stock')
+        .eq('is_in_stock', false);
+
+      if (error) {
+        console.error('Inventory status error:', error);
+        return;
+      }
+
+      const outOfStockItems = inventory.map(item => item.name);
+      
+      // Check each order for out of stock items
+      const statusMap = {};
+      orders.forEach(order => {
+        try {
+          const orderItems = typeof order.order_items === 'string' 
+            ? JSON.parse(order.order_items) 
+            : order.order_items || [];
+          
+          const outOfStockInOrder = orderItems.filter(item => 
+            outOfStockItems.includes(item.name)
+          );
+
+          if (outOfStockInOrder.length > 0) {
+            statusMap[order.id] = {
+              hasOutOfStock: true,
+              outOfStockItems: outOfStockInOrder.map(item => item.name)
+            };
+          }
+        } catch (e) {
+          console.error('Error checking order inventory:', e);
+        }
+      });
+
+      setInventoryStatus(statusMap);
+    } catch (error) {
+      console.error('Update inventory status error:', error);
+    }
+  }, [orders]);
+
   const filterOrders = useCallback((ordersList, showArchivedView) => {
     console.log('🔍 Filtering orders:', {
       totalOrders: ordersList.length,
@@ -1006,6 +1376,9 @@ const KitchenScreen = () => {
       setOrders(ordersData);
       filterOrders(ordersData, showArchived);
       
+      // Update inventory status for these orders
+      updateInventoryStatus();
+      
       // Check for new orders since last load
       const currentCount = ordersData.length;
       if (lastOrderCount.current > 0 && currentCount > lastOrderCount.current) {
@@ -1023,7 +1396,7 @@ const KitchenScreen = () => {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [showArchived, isKitchenOpen, showLiveNotification, filterOrders]);
+  }, [showArchived, isKitchenOpen, showLiveNotification, filterOrders, updateInventoryStatus]);
 
   const refreshAllData = useCallback(async () => {
     console.log('🔄 Refreshing all data...');
@@ -1033,15 +1406,16 @@ const KitchenScreen = () => {
         loadOrders(),
         loadKitchenStatus()
       ]);
+      await updateInventoryStatus();
     } catch (error) {
       console.error('Error refreshing data:', error);
     } finally {
       setIsRefreshing(false);
     }
-  }, [loadOrders, loadKitchenStatus]);
+  }, [loadOrders, loadKitchenStatus, updateInventoryStatus]);
 
   // ============================================
-  // FIXED KITCHEN TOGGLE FUNCTION
+  // KITCHEN TOGGLE FUNCTION
   // ============================================
 
   const toggleKitchen = useCallback(async () => {
@@ -1106,36 +1480,6 @@ const KitchenScreen = () => {
         hint: error.hint
       });
       
-      // Try REST API as last resort
-      try {
-        console.log('🔄 Trying REST API...');
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/Kitchens?id=eq.${KITCHEN_ID}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Prefer': 'return=representation'
-          },
-          body: JSON.stringify({
-            is_open: newState,
-            updated_at: new Date().toISOString()
-          })
-        });
-        
-        if (response.ok) {
-          console.log('✅ REST API update succeeded');
-          setIsKitchenOpen(newState);
-          showLiveNotification(
-            `Kitchen is now ${newState ? 'OPEN' : 'CLOSED'} (via REST API)`,
-            newState ? 'success' : 'warning'
-          );
-          return;
-        }
-      } catch (restError) {
-        console.error('❌ REST API failed:', restError);
-      }
-      
       // Final fallback: Update local state only
       setIsKitchenOpen(newState);
       showLiveNotification(
@@ -1146,7 +1490,7 @@ const KitchenScreen = () => {
   }, [isKitchenOpen, showLiveNotification, refreshAllData]);
 
   // ============================================
-  // FIXED ORDER ACTIONS WITH ARCHIVE SUPPORT
+  // ORDER ACTIONS WITH INVENTORY CHECKS
   // ============================================
 
   const updateOrderStatus = async (orderId, action, reason = null) => {
@@ -1155,6 +1499,17 @@ const KitchenScreen = () => {
       if (!order) {
         console.error('Order not found:', orderId);
         showLiveNotification('Order not found', 'error');
+        return;
+      }
+
+      // Check if order has out of stock items
+      const orderInventoryStatus = inventoryStatus[orderId];
+      if (orderInventoryStatus?.hasOutOfStockItems) {
+        Alert.alert(
+          'Out of Stock Items',
+          `This order contains out of stock items:\n\n${orderInventoryStatus.outOfStockItems.join('\n')}\n\nPlease restock these items in Inventory first.`,
+          [{ text: 'OK' }]
+        );
         return;
       }
 
@@ -1333,6 +1688,9 @@ const KitchenScreen = () => {
       if (kitchenChannel.current) {
         supabase.removeChannel(kitchenChannel.current);
       }
+      if (inventoryChannel.current) {
+        supabase.removeChannel(inventoryChannel.current);
+      }
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current);
       }
@@ -1351,35 +1709,15 @@ const KitchenScreen = () => {
     <View style={styles.header}>
       <View>
         <Text style={styles.title}>KITCHEN DISPLAY</Text>
-        <Text style={styles.subtitle}>Live Updates • Orders Archive When Completed/Declined</Text>
+        <Text style={styles.subtitle}>Live Updates • Inventory Management</Text>
       </View>
       <View style={styles.headerActions}>
-        {/* Database Test Button */}
         <TouchableOpacity
-          style={styles.testButton}
-          onPress={async () => {
-            console.log('🔍 Testing database connection...');
-            showLiveNotification('Running database tests...', 'info');
-            
-            const tests = await testDatabaseConnection();
-            const allPassed = Object.values(tests).every(test => test);
-            
-            if (allPassed) {
-              showLiveNotification('✅ All database tests passed!', 'success');
-            } else {
-              const failedTests = Object.entries(tests)
-                .filter(([_, passed]) => !passed)
-                .map(([test]) => test)
-                .join(', ');
-              showLiveNotification(`❌ Failed tests: ${failedTests}`, 'error');
-            }
-          }}
+          style={styles.inventoryButton}
+          onPress={() => navigation.navigate('Inventory')}
         >
-          <Icon 
-            name='database' 
-            size={24} 
-            color={Colors.warning} 
-          />
+          <Icon name='inventory' size={24} color={Colors.text} />
+          <Text style={styles.inventoryButtonText}>Inventory</Text>
         </TouchableOpacity>
         
         <TouchableOpacity
@@ -1467,6 +1805,15 @@ const KitchenScreen = () => {
               Open the kitchen to accept new orders
             </Text>
           )}
+          {!showArchived && isKitchenOpen && (
+            <TouchableOpacity
+              style={styles.inventoryButton}
+              onPress={() => navigation.navigate('Inventory')}
+            >
+              <Icon name='inventory' size={20} color={Colors.text} />
+              <Text style={styles.inventoryButtonText}>Manage Inventory</Text>
+            </TouchableOpacity>
+          )}
         </View>
       );
     }
@@ -1480,6 +1827,7 @@ const KitchenScreen = () => {
             onUpdateStatus={handleCompleteOrder}
             onDecline={openDeclineModal}
             isNew={newOrdersRef.current.includes(item.id)}
+            inventoryStatus={inventoryStatus[item.id]}
           />
         )}
         keyExtractor={item => item.id.toString()}
@@ -1518,13 +1866,93 @@ const KitchenScreen = () => {
       {renderHeader()}
       
       {/* Kitchen Status */}
-      <KitchenStatus
-        isOpen={isKitchenOpen}
-        onToggle={toggleKitchen}
-        activeOrdersCount={activeOrdersCount}
-        connectionStatus={connectionStatus}
-        newOrderCount={newOrdersCount}
-      />
+      <View style={styles.kitchenStatusContainer}>
+        <View style={styles.statusRow}>
+          <View style={styles.statusInfo}>
+            <View style={styles.statusIndicator}>
+              <View style={[
+                styles.statusDot,
+                { backgroundColor: isKitchenOpen ? Colors.success : Colors.error }
+              ]} />
+              <Text style={styles.statusTitle}>
+                {isKitchenOpen ? "ACTIVE ORDERS" : "KITCHEN CLOSED"}
+              </Text>
+            </View>
+            <View style={styles.orderCountContainer}>
+              <Text style={styles.orderCount}>{activeOrdersCount}</Text>
+              {newOrdersCount > 0 && (
+                <View style={styles.newOrderBadge}>
+                  <Text style={styles.newOrderBadgeText}>+{newOrdersCount}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          
+          <TouchableOpacity
+            style={[
+              styles.kitchenToggle,
+              { 
+                backgroundColor: isKitchenOpen ? Colors.error : Colors.success,
+              }
+            ]}
+            onPress={toggleKitchen}
+            activeOpacity={0.8}
+          >
+            <Icon 
+              name={isKitchenOpen ? "close" : "restaurant"} 
+              size={18} 
+              color={Colors.text} 
+            />
+            <Text style={styles.kitchenToggleText}>
+              {isKitchenOpen ? "CLOSE KITCHEN" : "OPEN KITCHEN"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.bottomRow}>
+          {!isKitchenOpen && (
+            <View style={styles.closedWarning}>
+              <Icon name="warning" size={16} color={Colors.warning} />
+              <Text style={styles.closedWarningText}>
+                Kitchen is closed. No new orders will be accepted.
+              </Text>
+            </View>
+          )}
+          
+          <View style={styles.connectionStatus}>
+            <View style={styles.connectionIndicator}>
+              <View style={[
+                styles.connectionDot,
+                { 
+                  backgroundColor: connectionStatus.connected === true ? Colors.connected : 
+                                 connectionStatus.connected === false ? Colors.disconnected : 
+                                 Colors.connecting,
+                }
+              ]}>
+                <Icon 
+                  name={connectionStatus.connected === true ? 'wifi' : 
+                         connectionStatus.connected === false ? 'wifi-off' : 'wifi-find'} 
+                  size={12} 
+                  color={Colors.background} 
+                />
+              </View>
+              <Text style={styles.connectionText}>
+                {connectionStatus.connected === true ? "LIVE • REAL-TIME" : 
+                 connectionStatus.connected === false ? "OFFLINE • MANUAL" : "CONNECTING..."}
+              </Text>
+            </View>
+            {connectionStatus.lastUpdate && (
+              <Text style={styles.lastUpdateText}>
+                Updated: {new Date(connectionStatus.lastUpdate).toLocaleTimeString([], { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  second: '2-digit' 
+                })}
+              </Text>
+            )}
+          </View>
+        </View>
+      </View>
       
       {/* Filter Bar */}
       {renderFilterBar()}
@@ -1604,6 +2032,51 @@ const KitchenScreen = () => {
 };
 
 // ============================================
+// APP NAVIGATION
+// ============================================
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+
+const Stack = createStackNavigator();
+
+const KitchenApp = () => {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: Colors.background,
+            elevation: 0,
+            shadowOpacity: 0,
+          },
+          headerTintColor: Colors.text,
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+        }}
+      >
+        <Stack.Screen 
+          name="KitchenMain" 
+          component={KitchenScreen}
+          options={{ 
+            headerShown: false,
+            title: 'Kitchen Display'
+          }}
+        />
+        <Stack.Screen 
+          name="Inventory" 
+          component={InventoryScreen}
+          options={{ 
+            headerShown: false,
+            title: 'Inventory Management'
+          }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+};
+
+// ============================================
 // RESPONSIVE STYLES
 // ============================================
 const styles = StyleSheet.create({
@@ -1668,10 +2141,22 @@ const styles = StyleSheet.create({
   },
   headerActions: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: isTablet ? 20 : 15,
   },
-  testButton: {
-    padding: 8,
+  inventoryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 8,
+  },
+  inventoryButtonText: {
+    color: Colors.text,
+    fontWeight: '600',
+    fontSize: 14,
   },
   reconnectButton: {
     padding: 8,
@@ -1863,6 +2348,10 @@ const styles = StyleSheet.create({
   declinedOrder: {
     borderLeftColor: Colors.error,
   },
+  outOfStockOrder: {
+    borderLeftColor: Colors.outOfStock,
+    backgroundColor: 'rgba(255, 82, 82, 0.05)',
+  },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1896,6 +2385,9 @@ const styles = StyleSheet.create({
   declinedBadge: {
     backgroundColor: Colors.error,
   },
+  outOfStockBadge: {
+    backgroundColor: Colors.outOfStock,
+  },
   orderStatusText: {
     fontSize: isTablet ? 14 : 12,
     fontWeight: 'bold',
@@ -1904,7 +2396,7 @@ const styles = StyleSheet.create({
   customerSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 10,
     gap: 10,
   },
   customerName: {
@@ -1916,6 +2408,21 @@ const styles = StyleSheet.create({
   orderTime: {
     fontSize: isTablet ? 16 : 14,
     color: Colors.textSecondary,
+  },
+  outOfStockWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 82, 82, 0.1)',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 10,
+    gap: 8,
+  },
+  outOfStockWarningText: {
+    flex: 1,
+    color: Colors.outOfStock,
+    fontSize: 14,
+    fontWeight: '600',
   },
   orderSummary: {
     flexDirection: 'row',
@@ -1934,19 +2441,47 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: isTablet ? 16 : 14,
   },
-  itemsPreview: {
+  itemsList: {
     marginBottom: 15,
   },
-  previewItem: {
-    color: Colors.text,
-    fontSize: isTablet ? 16 : 14,
-    marginBottom: 5,
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    padding: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 6,
   },
-  moreItems: {
-    color: Colors.textSecondary,
+  outOfStockItem: {
+    backgroundColor: 'rgba(255, 82, 82, 0.1)',
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemName: {
+    fontSize: isTablet ? 16 : 14,
+    color: Colors.text,
+  },
+  outOfStockItemName: {
+    color: Colors.outOfStock,
+    textDecorationLine: 'line-through',
+  },
+  itemFlavor: {
     fontSize: isTablet ? 14 : 12,
+    color: Colors.textSecondary,
     fontStyle: 'italic',
-    marginTop: 5,
+    marginLeft: 10,
+  },
+  stockIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stockIndicatorText: {
+    fontSize: 12,
+    color: Colors.error,
+    fontWeight: '600',
   },
   reasonContainer: {
     flexDirection: 'row',
@@ -1967,6 +2502,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  outOfStockActions: {
+    marginTop: 10,
+  },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1981,6 +2519,9 @@ const styles = StyleSheet.create({
   },
   declineButton: {
     backgroundColor: Colors.error,
+  },
+  outOfStockActionButton: {
+    backgroundColor: Colors.accent,
   },
   actionButtonText: {
     color: Colors.text,
@@ -2154,6 +2695,209 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: isTablet ? 18 : 16,
   },
+
+  // Inventory Screen Styles
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    margin: 15,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 10,
+    color: Colors.text,
+    fontSize: 16,
+  },
+  categoryScroll: {
+    marginHorizontal: 15,
+    marginBottom: 15,
+  },
+  categoryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: Colors.card,
+    borderRadius: 20,
+    marginRight: 10,
+  },
+  categoryButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  categoryButtonText: {
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  categoryButtonTextActive: {
+    color: Colors.text,
+    fontWeight: 'bold',
+  },
+  summaryCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.card,
+    margin: 15,
+    padding: 20,
+    borderRadius: 10,
+    justifyContent: 'space-around',
+  },
+  summaryItem: {
+    alignItems: 'center',
+  },
+  summaryNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.text,
+    marginBottom: 5,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  inventoryCard: {
+    backgroundColor: Colors.card,
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 10,
+    marginHorizontal: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  itemInfo: {
+    flex: 1,
+  },
+  itemName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: Colors.text,
+    marginBottom: 5,
+  },
+  itemCategory: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  stockBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
+    gap: 5,
+  },
+  stockText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  itemDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  priceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  priceText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  editPriceButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
+    gap: 4,
+  },
+  editPriceText: {
+    fontSize: 12,
+    color: Colors.warning,
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stockToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toggleLabel: {
+    color: Colors.text,
+    fontSize: 14,
+  },
+  lastUpdated: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  priceInputContainer: {
+    marginBottom: 20,
+  },
+  priceLabel: {
+    color: Colors.text,
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  priceInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+  },
+  currencySymbol: {
+    fontSize: 20,
+    color: Colors.text,
+    fontWeight: 'bold',
+  },
+  priceInput: {
+    flex: 1,
+    padding: 15,
+    fontSize: 18,
+    color: Colors.text,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveButton: {
+    backgroundColor: Colors.success,
+  },
+  cancelButton: {
+    backgroundColor: '#6c757d',
+  },
+  modalButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
 });
 
-export default KitchenScreen;
+export default KitchenApp;
