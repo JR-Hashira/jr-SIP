@@ -1,4 +1,4 @@
-// App.js - Complete Ordering System with Inventory Management and Real-time Order Status
+//
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Platform,
@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Modal,
   StatusBar,
-  Image,
   RefreshControl
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
@@ -87,7 +86,7 @@ const WING_FLAVORS = [
 ];
 
 // ----------------------------
-// ORDER SERVICE - UPDATED WITH REAL-TIME STATUS
+// ORDER SERVICE - UPDATED WITH PROPER DEDUPLICATION
 // ----------------------------
 const OrderService = {
   async checkKitchenStatus() {
@@ -137,7 +136,6 @@ const OrderService = {
 
       if (error) {
         console.error('❌ Error checking inventory:', error);
-        // If inventory check fails, allow ordering as fallback
         return { 
           available: true, 
           outOfStockItems: [],
@@ -172,7 +170,7 @@ const OrderService = {
     } catch (error) {
       console.error('❌ Inventory check error:', error);
       return { 
-        available: true, // Fallback to allow ordering
+        available: true,
         outOfStockItems: [],
         message: ''
       };
@@ -181,7 +179,6 @@ const OrderService = {
 
   async sendOrderToSupabase(order) {
     try {
-      // Check kitchen status first
       const kitchenCheck = await this.checkKitchenStatus();
       if (!kitchenCheck.isOpen) {
         return {
@@ -190,7 +187,6 @@ const OrderService = {
         };
       }
 
-      // Check inventory availability BEFORE processing order
       const inventoryCheck = await this.checkItemAvailability(order.items);
       if (!inventoryCheck.available) {
         return {
@@ -202,7 +198,6 @@ const OrderService = {
         };
       }
 
-      // Format order items for JSON storage
       const orderItems = order.items.map(item => ({
         id: item.id,
         name: item.name,
@@ -281,21 +276,54 @@ const OrderService = {
 
   async saveOrderToHistory(order) {
     try {
+      const history = await this.getOrderHistory();
+      
+      // Generate temporary ID with prefix
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substr(2, 9);
+      const tempId = `temp_${timestamp}_${random}`;
+      
       const orderWithMeta = {
         ...order,
-        id: Date.now(),
+        id: tempId,
+        supabase_id: null, // Will be set when synced from Supabase
         date: new Date().toLocaleString(),
         status: 'pending',
-        timestamp: Date.now()
+        timestamp: timestamp,
+        source: 'local_temp',
+        created_at: new Date().toISOString()
       };
 
-      const existingHistory = await AsyncStorage.getItem('orderHistory');
-      const history = existingHistory ? JSON.parse(existingHistory) : [];
-     
-      const updatedHistory = [orderWithMeta, ...history].slice(0, 50);
-      await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
-     
-      return { success: true, orderId: orderWithMeta.id };
+      // Check for duplicates within 10 seconds (local check)
+      const isDuplicate = history.some(existingOrder => 
+        existingOrder.customerName === order.customerName &&
+        existingOrder.total === order.total &&
+        Math.abs(existingOrder.timestamp - timestamp) < 10000 && // 10 seconds
+        existingOrder.source === 'local_temp'
+      );
+
+      if (isDuplicate) {
+        console.log('⚠️ Duplicate temp order detected within 10 seconds, skipping save');
+        return { success: true, orderId: tempId, skipped: true };
+      }
+
+      const updatedHistory = [orderWithMeta, ...history];
+      
+      // Clean up old temp orders (>5 minutes)
+      const filteredHistory = updatedHistory.filter(order => {
+        if (order.source === 'local_temp') {
+          const age = Date.now() - order.timestamp;
+          return age < 300000; // Keep temp orders under 5 minutes
+        }
+        return true;
+      });
+      
+      // Keep only last 50 orders
+      const finalHistory = filteredHistory.slice(0, 50);
+      await AsyncStorage.setItem('orderHistory', JSON.stringify(finalHistory));
+      
+      console.log('💾 Saved temp order locally:', tempId);
+      return { success: true, orderId: tempId };
     } catch (error) {
       console.error('Save history error:', error);
       return { success: false, error };
@@ -304,8 +332,54 @@ const OrderService = {
 
   async getOrderHistory() {
     try {
-      const history = await AsyncStorage.getItem('orderHistory');
-      return history ? JSON.parse(history) : [];
+      const historyString = await AsyncStorage.getItem('orderHistory');
+      if (!historyString) return [];
+      
+      const history = JSON.parse(historyString);
+      
+      // Clean up old temp orders (>5 minutes)
+      const filteredHistory = history.filter(order => {
+        if (order.source === 'local_temp') {
+          const age = Date.now() - (order.timestamp || 0);
+          return age < 300000; // Keep temp orders under 5 minutes
+        }
+        return true;
+      });
+      
+      // Deduplication logic
+      const groupedOrders = new Map();
+      
+      filteredHistory.forEach(order => {
+        // Group by customer + total + same minute
+        const key = `${order.customerName}_${order.total}_${Math.floor(order.timestamp / 60000)}`;
+        
+        if (!groupedOrders.has(key)) {
+          groupedOrders.set(key, []);
+        }
+        groupedOrders.get(key).push(order);
+      });
+      
+      const deduplicatedOrders = [];
+      
+      groupedOrders.forEach((orders, key) => {
+        if (orders.length === 1) {
+          deduplicatedOrders.push(orders[0]);
+        } else {
+          // For duplicates: Prefer Supabase orders > Newest
+          const supabaseOrders = orders.filter(o => o.source === 'supabase');
+          if (supabaseOrders.length > 0) {
+            // Take the newest Supabase order
+            supabaseOrders.sort((a, b) => b.timestamp - a.timestamp);
+            deduplicatedOrders.push(supabaseOrders[0]);
+          } else {
+            // Take the newest temp order
+            orders.sort((a, b) => b.timestamp - a.timestamp);
+            deduplicatedOrders.push(orders[0]);
+          }
+        }
+      });
+      
+      return deduplicatedOrders.sort((a, b) => b.timestamp - a.timestamp);
     } catch (error) {
       console.error('Get history error:', error);
       return [];
@@ -316,11 +390,11 @@ const OrderService = {
     try {
       const history = await this.getOrderHistory();
       const updatedHistory = history.map(order => {
-        if (order.id === orderId) {
+        if (order.id === orderId || order.supabase_id === orderId) {
           return { 
             ...order, 
             status: newStatus,
-            updated_at: new Date().toLocaleString()
+            updated_at: new Date().toISOString()
           };
         }
         return order;
@@ -362,7 +436,6 @@ const OrderService = {
         return {};
       }
 
-      // Convert to object for easy lookup
       const statusMap = {};
       data.forEach(item => {
         statusMap[item.name] = item.is_in_stock;
@@ -377,37 +450,73 @@ const OrderService = {
 
   async syncOrderFromSupabase(supabaseOrder) {
     try {
+      console.log('🔄 Syncing order from Supabase:', supabaseOrder.id);
       const history = await this.getOrderHistory();
       
-      // Check if order already exists in local history
-      const existingOrderIndex = history.findIndex(order => 
-        order.supabase_id === supabaseOrder.id
+      // Look for matching order by:
+      // 1. Same supabase_id
+      // 2. Same customer + total + within 1 minute
+      const existingTempOrderIndex = history.findIndex(order => 
+        order.source === 'local_temp' && (
+          // Match by customer, total, and time (within 1 minute)
+          (order.customerName === supabaseOrder.customer_name &&
+           order.total === supabaseOrder.total_price?.toString() &&
+           Math.abs(new Date(order.created_at).getTime() - new Date(supabaseOrder.created_at).getTime()) < 60000)
+        )
       );
 
       const orderData = {
-        id: supabaseOrder.id || Date.now(),
+        id: `supabase_${supabaseOrder.id}`, // Use consistent ID format
         supabase_id: supabaseOrder.id,
         customerName: supabaseOrder.customer_name,
         items: Array.isArray(supabaseOrder.order_items) ? supabaseOrder.order_items : [],
         total: supabaseOrder.total_price?.toString() || '0.00',
         status: supabaseOrder.status || 'pending',
         date: new Date(supabaseOrder.created_at).toLocaleString(),
-        updated_at: new Date(supabaseOrder.updated_at || supabaseOrder.created_at).toLocaleString(),
-        timestamp: Date.now()
+        updated_at: new Date(supabaseOrder.updated_at || supabaseOrder.created_at).toISOString(),
+        timestamp: Date.now(),
+        source: 'supabase',
+        created_at: supabaseOrder.created_at
       };
 
-      if (existingOrderIndex >= 0) {
-        // Update existing order
-        history[existingOrderIndex] = orderData;
+      let updatedHistory;
+      
+      if (existingTempOrderIndex >= 0) {
+        console.log('✅ Replacing temp order with Supabase order');
+        // Replace the temp order with the real Supabase order
+        updatedHistory = [...history];
+        updatedHistory[existingTempOrderIndex] = orderData;
       } else {
-        // Add new order
-        history.unshift(orderData);
+        console.log('➕ Adding new Supabase order to history');
+        // Check if this Supabase order already exists
+        const existingSupabaseOrder = history.find(order => 
+          order.supabase_id === supabaseOrder.id
+        );
+        
+        if (!existingSupabaseOrder) {
+          updatedHistory = [orderData, ...history];
+        } else {
+          // Update existing Supabase order
+          updatedHistory = history.map(order => 
+            order.supabase_id === supabaseOrder.id ? orderData : order
+          );
+        }
       }
 
-      // Keep only latest 50 orders
-      const updatedHistory = history.slice(0, 50);
-      await AsyncStorage.setItem('orderHistory', JSON.stringify(updatedHistory));
+      // Clean up old temp orders (>5 minutes)
+      const filteredHistory = updatedHistory.filter(order => {
+        if (order.source === 'local_temp') {
+          const age = Date.now() - (order.timestamp || 0);
+          return age < 300000; // Keep temp orders under 5 minutes
+        }
+        return true;
+      });
       
+      // Keep only last 50 orders
+      const finalHistory = filteredHistory.slice(0, 50);
+      await AsyncStorage.setItem('orderHistory', JSON.stringify(finalHistory));
+      
+      console.log('✅ Order synced successfully');
       return { success: true, order: orderData };
     } catch (error) {
       console.error('Sync order error:', error);
@@ -606,7 +715,6 @@ const WingFlavorModal = ({ visible, item, onClose, onAdd }) => {
   );
 };
 
-// Updated MenuItem with inventory status
 const MenuItem = ({ item, onAddToCart, isOutOfStock = false }) => {
   const [showWingModal, setShowWingModal] = useState(false);
 
@@ -692,7 +800,6 @@ const MenuItem = ({ item, onAddToCart, isOutOfStock = false }) => {
   );
 };
 
-// Updated CartItem with inventory warning
 const CartItem = ({ item, onRemove, onUpdateQuantity, isOutOfStock = false }) => (
   <View style={[
     styles.cartItem,
@@ -947,7 +1054,6 @@ const SuggestionModal = ({ visible, onClose }) => {
   );
 };
 
-// Updated checkout flow with inventory checks
 const CheckoutSection = ({ 
   cart, 
   total, 
@@ -997,7 +1103,6 @@ const CheckoutSection = ({
             ))}
           </ScrollView>
 
-          {/* Out of Stock Warning */}
           {hasOutOfStockItems && (
             <View style={styles.outOfStockBanner}>
               <Icon name="warning" size={20} color={Colors.warning} />
@@ -1312,7 +1417,6 @@ const HomeScreen = ({ navigation }) => {
             Late night food for hungry developers
           </Text>
 
-          {/* Kitchen Status */}
           <View style={[
             styles.kitchenStatusCard,
             { backgroundColor: kitchenStatus ? Colors.success : Colors.error }
@@ -1394,9 +1498,6 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
-// ----------------------------
-// MAIN MENU SCREEN - UPDATED WITH INVENTORY
-// ----------------------------
 const MenuScreen = ({ navigation }) => {
   const {
     cart,
@@ -1456,7 +1557,6 @@ const MenuScreen = ({ navigation }) => {
   useEffect(() => {
     refreshAllData();
    
-    // Set up real-time subscription for inventory updates
     const channel = supabase
       .channel('inventory-updates')
       .on('postgres_changes',
@@ -1468,13 +1568,11 @@ const MenuScreen = ({ navigation }) => {
         (payload) => {
           console.log('📦 Inventory updated:', payload.new.name, payload.new.is_in_stock);
           
-          // Update local inventory status
           setInventoryStatus(prev => ({
             ...prev,
             [payload.new.name]: payload.new.is_in_stock
           }));
 
-          // If item is now out of stock and in cart, show warning
           if (!payload.new.is_in_stock) {
             const itemInCart = cart.find(item => item.name === payload.new.name);
             if (itemInCart) {
@@ -1532,7 +1630,6 @@ const MenuScreen = ({ navigation }) => {
       return;
     }
 
-    // Check for out of stock items in cart
     const outOfStockItems = cart.filter(item => inventoryStatus[item.name] === false);
     if (outOfStockItems.length > 0) {
       Alert.alert(
@@ -1541,7 +1638,6 @@ const MenuScreen = ({ navigation }) => {
         [{ 
           text: "Update Cart", 
           onPress: () => {
-            // Refresh inventory status
             loadInventoryStatus();
           }
         }]
@@ -1563,16 +1659,38 @@ const MenuScreen = ({ navigation }) => {
         customerName: customerName.trim()
       };
 
-      // Save to local history
-      const historyResult = await OrderService.saveOrderToHistory(order);
-      if (!historyResult.success) {
-        throw new Error('Failed to save order history');
+      // Check for recent duplicate orders
+      const history = await OrderService.getOrderHistory();
+      const recentDuplicate = history.some(histOrder => 
+        histOrder.customerName === customerName.trim() &&
+        histOrder.total === total &&
+        Date.now() - histOrder.timestamp < 30000
+      );
+
+      if (recentDuplicate) {
+        Alert.alert(
+          "Duplicate Order Detected",
+          "It looks like you just placed a similar order. Please wait a moment.",
+          [{ text: "OK" }]
+        );
+        return;
       }
 
-      // Send to Supabase (includes inventory check)
+      // 1. Save temp order locally FIRST
+      const tempOrderResult = await OrderService.saveOrderToHistory(order);
+      if (!tempOrderResult.success) {
+        throw new Error('Failed to save temporary order');
+      }
+
+      // 2. Send to Supabase
       const supabaseResult = await OrderService.sendOrderToSupabase(order);
      
       if (supabaseResult.success) {
+        // 3. IF successful: Replace temp with Supabase order
+        if (supabaseResult.data?.id) {
+          await OrderService.syncOrderFromSupabase(supabaseResult.data);
+        }
+
         // Set recent order for feedback
         setRecentOrder({
           id: supabaseResult.data?.id || Date.now(),
@@ -1602,10 +1720,12 @@ const MenuScreen = ({ navigation }) => {
           ]
         );
       } else {
+        // 4. IF failed: Keep temp order with warning
         if (supabaseResult.error?.message === 'KITCHEN_CLOSED') {
           Alert.alert(
             "Kitchen Just Closed",
-            "The kitchen closed while processing your order. Please try again later."
+            "The kitchen closed while processing your order. Your order has been saved locally and will be submitted when the kitchen reopens.",
+            [{ text: "OK" }]
           );
         } else if (supabaseResult.error?.message === 'ITEMS_OUT_OF_STOCK') {
           Alert.alert(
@@ -1614,13 +1734,16 @@ const MenuScreen = ({ navigation }) => {
             [{ 
               text: "Update Cart", 
               onPress: () => {
-                // Refresh inventory status
                 loadInventoryStatus();
               }
             }]
           );
         } else {
-          throw new Error('Failed to send order');
+          Alert.alert(
+            "Order Partially Saved",
+            "Your order was saved locally but couldn't be sent to the kitchen. Please try again later.",
+            [{ text: "OK" }]
+          );
         }
       }
     } catch (error) {
@@ -1651,7 +1774,6 @@ const MenuScreen = ({ navigation }) => {
             />
           }
         >
-          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity
               style={styles.backButton}
@@ -1667,7 +1789,6 @@ const MenuScreen = ({ navigation }) => {
             </View>
           </View>
 
-          {/* Kitchen Status */}
           {!kitchenStatus && (
             <View style={styles.kitchenClosedBanner}>
               <Icon name="warning" size={20} color={Colors.white} />
@@ -1677,7 +1798,6 @@ const MenuScreen = ({ navigation }) => {
             </View>
           )}
 
-          {/* Inventory Status Banner */}
           {Object.keys(inventoryStatus).length > 0 && 
            Object.values(inventoryStatus).filter(status => !status).length > 0 && (
             <View style={styles.inventoryStatusBanner}>
@@ -1688,7 +1808,6 @@ const MenuScreen = ({ navigation }) => {
             </View>
           )}
 
-          {/* Search */}
           <View style={styles.searchContainer}>
             <Icon name="search" size={20} color={Colors.textSecondary} />
             <TextInput
@@ -1705,7 +1824,6 @@ const MenuScreen = ({ navigation }) => {
             ) : null}
           </View>
 
-          {/* Categories */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1735,7 +1853,6 @@ const MenuScreen = ({ navigation }) => {
             ))}
           </ScrollView>
 
-          {/* Menu Items */}
           <View style={styles.menuSection}>
             <Text style={styles.sectionTitle}>
               {selectedCategory === 'all' ? 'All Menu Items' :
@@ -1763,7 +1880,6 @@ const MenuScreen = ({ navigation }) => {
           </View>
         </ScrollView>
 
-        {/* Checkout Section */}
         <CheckoutSection
           cart={cart}
           total={total}
@@ -1776,7 +1892,6 @@ const MenuScreen = ({ navigation }) => {
         />
       </SafeAreaView>
 
-      {/* Name Modal */}
       <Modal
         visible={showNameModal}
         animationType="slide"
@@ -1828,7 +1943,6 @@ const MenuScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* Feedback Modal */}
       <FeedbackModal
         visible={showFeedbackModal}
         onClose={() => setShowFeedbackModal(false)}
@@ -1849,12 +1963,17 @@ const OrderStatusScreen = ({ navigation }) => {
     try {
       setRefreshing(true);
       const history = await OrderService.getOrderHistory();
-      // Show all orders (not just active ones) for status tracking
-      const sortedOrders = history.sort((a, b) => {
-        const timeA = a.timestamp || 0;
-        const timeB = b.timestamp || 0;
-        return timeB - timeA;
+      // Filter out temp orders that are >5 minutes old
+      const currentTime = Date.now();
+      const filteredOrders = history.filter(order => {
+        if (order.source === 'local_temp') {
+          const age = currentTime - order.timestamp;
+          return age < 300000; // Keep temp orders under 5 minutes
+        }
+        return true;
       });
+      
+      const sortedOrders = filteredOrders.sort((a, b) => b.timestamp - a.timestamp);
       setOrders(sortedOrders.slice(0, 10));
       setLastUpdate(new Date().toLocaleTimeString());
     } catch (error) {
@@ -1868,7 +1987,9 @@ const OrderStatusScreen = ({ navigation }) => {
   useEffect(() => {
     loadOrders();
 
-    // Subscribe to real-time updates for orders
+    // Track processed updates to prevent duplicates
+    const processedUpdates = new Set();
+    
     const channel = supabase
       .channel('customer-order-status')
       .on('postgres_changes',
@@ -1878,48 +1999,65 @@ const OrderStatusScreen = ({ navigation }) => {
           table: 'orders'
         },
         async (payload) => {
-          console.log('📱 Real-time order update:', payload);
+          // Create unique identifier for this update
+          const updateKey = `${payload.new.id}_${payload.new.status}_${payload.new.updated_at}`;
+          
+          // Skip if we've already processed this update
+          if (processedUpdates.has(updateKey)) {
+            return;
+          }
+          
+          processedUpdates.add(updateKey);
+          
+          // Clean up old processed updates
+          if (processedUpdates.size > 100) {
+            const array = Array.from(processedUpdates);
+            processedUpdates.clear();
+            array.slice(-50).forEach(key => processedUpdates.add(key));
+          }
+          
+          console.log('📱 Processing order update:', payload.new.id, payload.new.status);
           
           if (payload.eventType === 'UPDATE') {
-            // Update the order in local storage
-            await OrderService.syncOrderFromSupabase(payload.new);
+            const shouldNotify = payload.new.status !== payload.old?.status;
             
-            // Show notification based on status change
-            if (payload.new.status === 'ready' && payload.old.status !== 'ready') {
-              const orderItems = payload.new.order_items || [];
-              const itemNames = orderItems.map(item =>
-                `${item.quantity}x ${item.name}`
-              ).join(', ');
-             
-              Alert.alert(
-                "🎉 Order Ready!",
-                `Your order is now ready for pickup!\n\n${itemNames}`,
-                [{ text: "OK" }]
-              );
-            } else if (payload.new.status === 'declined' && payload.old.status !== 'declined') {
-              Alert.alert(
-                "😔 Order Declined",
-                "We're sorry, your order was declined by the kitchen.",
-                [{ text: "OK" }]
-              );
-            } else if (payload.new.status === 'preparing' && payload.old.status !== 'preparing') {
-              Alert.alert(
-                "👨‍🍳 Order Being Prepared",
-                "Your order is now being prepared in the kitchen!",
-                [{ text: "OK" }]
-              );
-            } else if (payload.new.status === 'completed' && payload.old.status !== 'completed') {
-              Alert.alert(
-                "✅ Order Completed",
-                "Your order has been completed. Thank you!",
-                [{ text: "OK" }]
-              );
+            if (shouldNotify) {
+              await OrderService.syncOrderFromSupabase(payload.new);
+              
+              if (payload.new.status === 'ready' && payload.old.status !== 'ready') {
+                const orderItems = payload.new.order_items || [];
+                const itemNames = orderItems.map(item =>
+                  `${item.quantity}x ${item.name}`
+                ).join(', ');
+               
+                Alert.alert(
+                  "🎉 Order Ready!",
+                  `Your order is now ready for pickup!\n\n${itemNames}`,
+                  [{ text: "OK" }]
+                );
+              } else if (payload.new.status === 'declined' && payload.old.status !== 'declined') {
+                Alert.alert(
+                  "😔 Order Declined",
+                  "We're sorry, your order was declined by the kitchen.",
+                  [{ text: "OK" }]
+                );
+              } else if (payload.new.status === 'preparing' && payload.old.status !== 'preparing') {
+                Alert.alert(
+                  "👨‍🍳 Order Being Prepared",
+                  "Your order is now being prepared in the kitchen!",
+                  [{ text: "OK" }]
+                );
+              } else if (payload.new.status === 'completed' && payload.old.status !== 'completed') {
+                Alert.alert(
+                  "✅ Order Completed",
+                  "Your order has been completed. Thank you!",
+                  [{ text: "OK" }]
+                );
+              }
             }
             
-            // Refresh the orders list
             loadOrders();
           } else if (payload.eventType === 'INSERT') {
-            // New order added, sync it
             await OrderService.syncOrderFromSupabase(payload.new);
             loadOrders();
           }
@@ -2020,14 +2158,17 @@ const OrderStatusScreen = ({ navigation }) => {
 
           {orders.length > 0 ? (
             orders.map((order) => (
-              <View key={order.id} style={[
+              <View key={`${order.id}-${order.timestamp}`} style={[
                 getCardBackground(order.status),
                 { borderLeftColor: getStatusColor(order.status) }
               ]}>
                 <View style={styles.orderHeader}>
                   <View style={styles.orderIdContainer}>
                     <Icon name={getStatusIcon(order.status)} size={24} color={getStatusColor(order.status)} />
-                    <Text style={styles.orderId}>Order #{order.id.toString().slice(-6)}</Text>
+                    <Text style={styles.orderId}>
+                      {order.source === 'local_temp' ? '🔄 ' : ''}
+                      Order #{order.id.toString().replace('temp_', '').slice(-6)}
+                    </Text>
                   </View>
                   <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
                     {order.status.toUpperCase()}
@@ -2036,6 +2177,7 @@ const OrderStatusScreen = ({ navigation }) => {
                
                 <Text style={styles.statusMessage}>
                   {getStatusMessage(order.status)}
+                  {order.source === 'local_temp' && ' (Saved locally)'}
                 </Text>
                
                 <Text style={styles.orderCustomer}>Customer: {order.customerName}</Text>
@@ -2103,7 +2245,6 @@ const OrderStatusScreen = ({ navigation }) => {
             </View>
           )}
 
-          {/* Order Status Guide */}
           <View style={styles.completedSection}>
             <Text style={styles.completedTitle}>Order Status Guide</Text>
             <View style={styles.statusGuide}>
@@ -2187,7 +2328,6 @@ const OrderHistoryScreen = ({ navigation }) => {
             <View style={styles.headerRight} />
           </View>
 
-          {/* Filter Buttons */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -2229,7 +2369,7 @@ const OrderHistoryScreen = ({ navigation }) => {
 
           {filteredHistory.length > 0 ? (
             filteredHistory.map((order) => (
-              <View key={order.id} style={[
+              <View key={`${order.id}-${order.timestamp}`} style={[
                 styles.orderCard,
                 { borderLeftColor: getStatusColor(order.status) }
               ]}>
@@ -2240,6 +2380,7 @@ const OrderHistoryScreen = ({ navigation }) => {
                   </View>
                   <Text style={[styles.orderStatus, { color: getStatusColor(order.status) }]}>
                     {order.status.toUpperCase()}
+                    {order.source === 'local_temp' && ' (Local)'}
                   </Text>
                 </View>
 
@@ -2507,9 +2648,11 @@ const ProfileScreen = ({ navigation }) => {
 
   const loadOrderStats = async () => {
     const history = await OrderService.getOrderHistory();
+    // Count only Supabase orders (real orders)
+    const supabaseOrders = history.filter(order => order.source === 'supabase');
     setOrderStats({
-      total: history.length,
-      lastOrder: history[0] || null
+      total: supabaseOrders.length,
+      lastOrder: supabaseOrders[0] || null
     });
   };
 
@@ -2744,7 +2887,7 @@ const App = () => {
 };
 
 // ----------------------------
-// STYLES
+// STYLES (unchanged)
 // ----------------------------
 const styles = StyleSheet.create({
   container: {
@@ -3879,8 +4022,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.primary,
   },
-  
-  // New inventory-related styles
   outOfStockItem: {
     opacity: 0.6,
   },
